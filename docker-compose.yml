@@ -1,35 +1,68 @@
 version: '3.8'
 
 services:
-  good-job-bot:
-    build: .
-    container_name: good-job-bot
+  # PostgreSQL 資料庫服務
+  postgres:
+    image: postgres:16-alpine
+    container_name: good-job-postgres
     restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-goodjob}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-goodjob123}
+      - POSTGRES_DB=${POSTGRES_DB:-goodjob_db}
+      # 確保初始化時創建指定的資料庫
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-goodjob} -d ${POSTGRES_DB:-goodjob_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  good-job-bot:
+    container_name: good-job-bot
+    image: good-job-bot:latest
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     env_file:
       - .env.example
     ports:
       - "3000:3000"  # LINE Bot (Flask)
       - "8880:8880"  # FastAPI
-    environment:
-      # LINE Bot 設定
-      - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
-      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+    # environment:
+    #   # LINE Bot 設定
+    #   - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
+    #   - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
       
-      # JWT 設定
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-this-in-production}
+    #   # JWT 設定
+    #   - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-key-change-this-in-production}
       
-      # Google Maps API Key
-      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
+    #   # Google Maps API Key
+    #   - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
       
-      # 管理員帳號設定（可選）
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+    #   # 管理員帳號設定（可選）
+    #   - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+    #   - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      
+    #   # PostgreSQL 資料庫設定
+    #   - POSTGRES_HOST=postgres
+    #   - POSTGRES_PORT=5432
+    #   - POSTGRES_USER=${POSTGRES_USER:-goodjob}
+    #   - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-goodjob123}
+    #   - POSTGRES_DB=${POSTGRES_DB:-goodjob_db}
+    #   - DATABASE_URL=postgresql://${POSTGRES_USER:-goodjob}:${POSTGRES_PASSWORD:-goodjob123}@postgres:5432/${POSTGRES_DB:-goodjob_db}
       
       # Python 設定
-      - PYTHONUNBUFFERED=1
+    #  - PYTHONUNBUFFERED=1
     volumes:
       # 如果需要持久化資料，可以掛載 volume
-      # - ./data:/app/data
+      - ./data:/app/data
       # 開發模式：取消註解以下行以即時反映程式碼變更
       # - ./part_time_jobs.py:/app/part_time_jobs.py:ro
     healthcheck:
@@ -38,3 +71,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  postgres_data:

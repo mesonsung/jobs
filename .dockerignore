@@ -44,3 +44,14 @@ Thumbs.db
 # Other
 menu.py
 pyrightconfig.json
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Data directories
+data/
+*.db
+*.sqlite
+*.sqlite3

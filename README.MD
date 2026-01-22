@@ -167,6 +167,14 @@ GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
 # 管理員帳號設定（可選）
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123
+
+# PostgreSQL 資料庫設定
+POSTGRES_USER=goodjob
+POSTGRES_PASSWORD=goodjob123
+POSTGRES_DB=goodjob_db
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql://goodjob:goodjob123@postgres:5432/goodjob_db
 ```
 
 **注意：** `docker-compose.yml` 已配置為自動從 `.env` 檔案讀取環境變數（透過 `env_file: - .env`），您只需要編輯 `.env` 檔案即可。
@@ -223,16 +231,20 @@ docker rm good-job-bot
 - **端口映射：**
   - `3000:3000` - LINE Bot (Flask Webhook)
   - `8880:8880` - FastAPI API 文件
+  - `5432:5432` - PostgreSQL 資料庫（可選，僅用於外部連接）
   
 - **環境變數：**
   - 所有敏感資訊應透過環境變數傳入
   - 生產環境請使用 `.env` 檔案或 Docker secrets
   - 必須設定的環境變數：`LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`
+  - PostgreSQL 設定可透過環境變數自訂（預設值已配置）
 
 - **資料持久化：**
-  - 目前資料儲存在記憶體中，容器重啟後會遺失
-  - 如需持久化，建議使用資料庫（PostgreSQL、MySQL 等）
-  - 可在 `docker-compose.yml` 中取消註解 volume 掛載來持久化資料
+  - **PostgreSQL 資料庫已整合**：使用 Docker volume `postgres_data` 持久化資料
+  - 資料庫資料會保存在 Docker volume 中，容器重啟後不會遺失
+  - 如需備份資料，可備份 Docker volume 或使用 `pg_dump`
+  - 清除資料：執行 `docker-compose down -v`（會刪除所有 volume）
+  - **如果遇到資料庫不存在錯誤**：可能是 volume 使用了舊的資料庫名稱，執行 `docker-compose down -v` 清除 volume 後重新啟動
 
 - **健康檢查：**
   - Docker Compose 已包含健康檢查設定
@@ -242,6 +254,15 @@ docker rm good-job-bot
 - **開發模式：**
   - 如需即時反映程式碼變更，可在 `docker-compose.yml` 中取消註解 volume 掛載
   - 生產環境建議移除 volume 掛載，使用映像內的程式碼
+
+- **映像優化：**
+  - 使用 **Alpine Linux** 作為基礎映像（極小化映像大小）
+  - 使用多階段構建（multi-stage build）減少映像大小
+  - 構建階段包含編譯工具，運行階段僅保留運行時依賴
+  - 使用非 root 使用者運行應用程式（安全性最佳實踐）
+  - 自動清理構建緩存和不需要的檔案
+  - 預期映像大小約為 **100-150MB**（相較於未優化版本減少約 70-80%）
+  - Alpine 使用 `apk` 套件管理器，映像更小但構建時間可能稍長
 
 ## 執行系統
 

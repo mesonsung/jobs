@@ -1,5 +1,5 @@
 """
-Good Job 報名系統
+Good Jobs 報名系統
 
 使用 FastAPI 作為後台 API，LINE Bot 作為前台介面
 包含：
@@ -30,8 +30,99 @@ import base64
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from datetime import timedelta
+from sqlalchemy import create_engine, Column, String, Integer, Float, Boolean, Text, DateTime, ForeignKey, ARRAY
+from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
+from sqlalchemy.sql import func
 
-# ==================== 資料模型 ====================
+# ==================== 資料庫設定 ====================
+
+# 建立 Base 類別
+Base = declarative_base()
+
+# 從環境變數取得資料庫連接資訊
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    f"postgresql://{os.getenv('POSTGRES_USER', 'goodjob')}:{os.getenv('POSTGRES_PASSWORD', 'goodjob123')}@{os.getenv('POSTGRES_HOST', 'localhost')}:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB', 'goodjob_db')}"
+)
+
+# 建立資料庫引擎
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+
+# 建立會話工廠
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# 資料庫依賴（用於 FastAPI）
+def get_db():
+    """取得資料庫會話"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# ==================== SQLAlchemy 資料模型 ====================
+
+class JobModel(Base):
+    """工作資料表模型"""
+    __tablename__ = "jobs"
+    
+    id = Column(String, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    location = Column(String, nullable=False)
+    date = Column(String, nullable=False)  # YYYY-MM-DD
+    shifts = Column(ARRAY(String), nullable=False)
+    location_image_url = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    # 關聯
+    applications = relationship("ApplicationModel", back_populates="job", cascade="all, delete-orphan")
+
+class ApplicationModel(Base):
+    """報名記錄資料表模型"""
+    __tablename__ = "applications"
+    
+    id = Column(String, primary_key=True, index=True)
+    job_id = Column(String, ForeignKey("jobs.id"), nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    user_name = Column(String, nullable=True)
+    shift = Column(String, nullable=False)
+    applied_at = Column(DateTime, nullable=False, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # 關聯
+    job = relationship("JobModel", back_populates="applications")
+
+class UserModel(Base):
+    """使用者資料表模型"""
+    __tablename__ = "users"
+    
+    id = Column(String, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False, index=True)
+    email = Column(String, nullable=True)
+    full_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    address = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=True)  # LINE 使用者可能沒有密碼
+    is_admin = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    line_user_id = Column(String, unique=True, nullable=True, index=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+# 初始化資料庫（建立所有資料表）
+def init_db():
+    """初始化資料庫，建立所有資料表"""
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ 資料庫表已建立")
+    except Exception as e:
+        print(f"⚠️  資料庫初始化失敗：{e}")
+        raise
+
+# ==================== 資料模型（Pydantic，用於 API） ====================
 
 class Job(BaseModel):
     """工作資料模型"""
@@ -109,113 +200,223 @@ class TokenData(BaseModel):
 class JobService:
     """工作管理服務"""
     
-    def __init__(self):
-        # 工作儲存（實際應用中應該使用資料庫）
-        # 格式：{job_id: Job}
-        self.jobs: Dict[str, Job] = {}
+    def __init__(self, db: Optional[Session] = None):
+        """
+        初始化工作服務
+        
+        參數:
+            db: 資料庫會話（可選，如果提供則使用，否則創建新會話）
+        """
+        self.db = db
     
-    def _get_next_job_id(self) -> str:
+    def _get_db(self) -> Session:
+        """取得資料庫會話"""
+        if self.db:
+            return self.db
+        return SessionLocal()
+    
+    def _get_next_job_id(self, db: Optional[Session] = None) -> str:
         """
         取得下一個工作編號
+        
+        參數:
+            db: 資料庫會話（可選）
         
         返回:
             str: 工作編號（格式：JOB001, JOB002, ...）
         """
-        # 找出現有工作中的最大流水號
-        max_sequence = 0
-        for job_id in self.jobs.keys():
-            if job_id.startswith('JOB') and len(job_id) > 3:
-                try:
-                    # 提取流水號部分（JOB001 -> 001 -> 1）
-                    sequence = int(job_id[3:])
-                    max_sequence = max(max_sequence, sequence)
-                except ValueError:
-                    continue
+        if db is None:
+            db = self._get_db()
         
-        # 下一個流水號
-        next_sequence = max_sequence + 1
+        # 從資料庫查詢最大流水號
+        max_job = db.query(JobModel).filter(JobModel.id.like('JOB%')).order_by(JobModel.id.desc()).first()
+        
+        if max_job:
+            try:
+                # 提取流水號部分（JOB001 -> 001 -> 1）
+                sequence = int(max_job.id[3:])
+                next_sequence = sequence + 1
+            except ValueError:
+                next_sequence = 1
+        else:
+            next_sequence = 1
+        
         # 使用 3 位數流水號，不足補零
         return f"JOB{next_sequence:03d}"
     
-    def create_job(self, job_data: CreateJobRequest) -> Job:
+    def create_job(self, job_data: CreateJobRequest, db: Optional[Session] = None) -> Job:
         """
         建立工作
         
         參數:
             job_data: 工作資料
+            db: 資料庫會話（可選）
         
         返回:
             Job: 建立的工作物件
         """
-        # 工作編號格式：JOB+流水號（例如：JOB001, JOB002）
-        job_id = self._get_next_job_id()
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
         
-        # 取得座標（如果未提供）
-        latitude = job_data.latitude
-        longitude = job_data.longitude
-        
-        if latitude is None or longitude is None:
-            # 嘗試從地址取得座標
-            coordinates = geocoding_service.get_coordinates(job_data.location)
-            if coordinates:
-                latitude, longitude = coordinates
-            else:
-                print(f"⚠️  無法取得工作地點座標：{job_data.location}")
-        
-        job = Job(
-            id=job_id,
-            name=job_data.name,
-            location=job_data.location,
-            date=job_data.date,
-            shifts=job_data.shifts,
-            location_image_url=job_data.location_image_url,
-            latitude=latitude,
-            longitude=longitude
-        )
-        
-        self.jobs[job_id] = job
-        return job
+        try:
+            # 工作編號格式：JOB+流水號（例如：JOB001, JOB002）
+            job_id = self._get_next_job_id(db)
+            
+            # 取得座標（如果未提供）
+            latitude = job_data.latitude
+            longitude = job_data.longitude
+            
+            if latitude is None or longitude is None:
+                # 嘗試從地址取得座標
+                coordinates = geocoding_service.get_coordinates(job_data.location)
+                if coordinates:
+                    latitude, longitude = coordinates
+                else:
+                    print(f"⚠️  無法取得工作地點座標：{job_data.location}")
+            
+            # 建立資料庫記錄
+            job_model = JobModel(
+                id=job_id,
+                name=job_data.name,
+                location=job_data.location,
+                date=job_data.date,
+                shifts=job_data.shifts,
+                location_image_url=job_data.location_image_url,
+                latitude=latitude,
+                longitude=longitude
+            )
+            
+            db.add(job_model)
+            db.commit()
+            db.refresh(job_model)
+            
+            # 轉換為 Pydantic 模型
+            job = Job(
+                id=job_model.id,
+                name=job_model.name,
+                location=job_model.location,
+                date=job_model.date,
+                shifts=job_model.shifts,
+                location_image_url=job_model.location_image_url,
+                latitude=job_model.latitude,
+                longitude=job_model.longitude
+            )
+            
+            return job
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            if should_close:
+                db.close()
     
-    def get_job(self, job_id: str) -> Optional[Job]:
+    def get_job(self, job_id: str, db: Optional[Session] = None) -> Optional[Job]:
         """取得工作"""
-        return self.jobs.get(job_id)
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            job_model = db.query(JobModel).filter(JobModel.id == job_id).first()
+            if not job_model:
+                return None
+            
+            return Job(
+                id=job_model.id,
+                name=job_model.name,
+                location=job_model.location,
+                date=job_model.date,
+                shifts=job_model.shifts,
+                location_image_url=job_model.location_image_url,
+                latitude=job_model.latitude,
+                longitude=job_model.longitude
+            )
+        finally:
+            if should_close:
+                db.close()
     
-    def get_all_jobs(self) -> List[Job]:
+    def get_all_jobs(self, db: Optional[Session] = None) -> List[Job]:
         """取得所有工作"""
-        return list(self.jobs.values())
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            job_models = db.query(JobModel).order_by(JobModel.date).all()
+            return [
+                Job(
+                    id=job.id,
+                    name=job.name,
+                    location=job.location,
+                    date=job.date,
+                    shifts=job.shifts,
+                    location_image_url=job.location_image_url,
+                    latitude=job.latitude,
+                    longitude=job.longitude
+                )
+                for job in job_models
+            ]
+        finally:
+            if should_close:
+                db.close()
     
-    def get_available_jobs(self) -> List[Job]:
+    def get_available_jobs(self, db: Optional[Session] = None) -> List[Job]:
         """取得可報名的工作（日期大於等於今天）"""
-        today = datetime.date.today()
-        available_jobs = []
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
         
-        for job in self.jobs.values():
-            try:
-                job_date = datetime.datetime.strptime(job.date, '%Y-%m-%d').date()
-                if job_date >= today:
-                    available_jobs.append(job)
-            except ValueError:
-                continue
-        
-        # 按日期排序
-        available_jobs.sort(key=lambda x: x.date)
-        return available_jobs
+        try:
+            today = datetime.date.today().strftime('%Y-%m-%d')
+            job_models = db.query(JobModel).filter(JobModel.date >= today).order_by(JobModel.date).all()
+            
+            return [
+                Job(
+                    id=job.id,
+                    name=job.name,
+                    location=job.location,
+                    date=job.date,
+                    shifts=job.shifts,
+                    location_image_url=job.location_image_url,
+                    latitude=job.latitude,
+                    longitude=job.longitude
+                )
+                for job in job_models
+            ]
+        finally:
+            if should_close:
+                db.close()
 
 # ==================== 模組 2: 報名服務 (ApplicationService) ====================
 
 class ApplicationService:
     """報名管理服務"""
     
-    def __init__(self):
-        # 報名記錄儲存（實際應用中應該使用資料庫）
-        # 格式：{application_id: Application}
-        self.applications: Dict[str, Application] = {}
-        # 使用者報名索引：{user_id: [application_id, ...]}
-        self.user_applications: Dict[str, List[str]] = {}
-        # 工作報名索引：{job_id: [application_id, ...]}
-        self.job_applications: Dict[str, List[str]] = {}
+    def __init__(self, db: Optional[Session] = None):
+        """
+        初始化報名服務
+        
+        參數:
+            db: 資料庫會話（可選，如果提供則使用，否則創建新會話）
+        """
+        self.db = db
     
-    def create_application(self, job_id: str, user_id: str, shift: str, user_name: Optional[str] = None) -> Application:
+    def _get_db(self) -> Session:
+        """取得資料庫會話"""
+        if self.db:
+            return self.db
+        return SessionLocal()
+    
+    def create_application(self, job_id: str, user_id: str, shift: str, user_name: Optional[str] = None, db: Optional[Session] = None) -> Application:
         """
         建立報名記錄
         
@@ -224,124 +425,215 @@ class ApplicationService:
             user_id: 使用者ID
             shift: 選擇的班別
             user_name: 使用者名稱（可選）
+            db: 資料庫會話（可選）
         
         返回:
             Application: 報名記錄
         """
-        # 報名編號格式：工作編號-日期-流水號
-        # 例如：JOB001-20260110-001
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
         
-        # 取得當前日期（YYYYMMDD格式）
-        today = datetime.datetime.now().strftime('%Y%m%d')
-        
-        # 計算該工作在同一天的流水號
-        # 找出該工作在同一天的所有報名記錄
-        same_day_applications = []
-        for app_id, app in self.applications.items():
-            if app.job_id == job_id:
-                # 檢查報名時間是否為同一天
-                app_date = app.applied_at.split()[0].replace('-', '')  # 提取日期部分並移除連字號
-                if app_date == today:
-                    same_day_applications.append(app_id)
-        
-        # 流水號 = 當天報名數量 + 1（3位數，補零）
-        sequence_number = len(same_day_applications) + 1
-        sequence_str = f"{sequence_number:03d}"
-        
-        # 組合報名編號：工作編號-日期-流水號
-        application_id = f"{job_id}-{today}-{sequence_str}"
-        
-        application = Application(
-            id=application_id,
-            job_id=job_id,
-            user_id=user_id,
-            user_name=user_name,
-            shift=shift,
-            applied_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        )
-        
-        self.applications[application_id] = application
-        
-        # 更新索引
-        if user_id not in self.user_applications:
-            self.user_applications[user_id] = []
-        self.user_applications[user_id].append(application_id)
-        
-        if job_id not in self.job_applications:
-            self.job_applications[job_id] = []
-        self.job_applications[job_id].append(application_id)
-        
-        return application
+        try:
+            # 報名編號格式：工作編號-日期-流水號
+            # 例如：JOB001-20260110-001
+            
+            # 取得當前日期（YYYYMMDD格式）
+            today = datetime.datetime.now().strftime('%Y%m%d')
+            today_date = datetime.datetime.now().date()
+            
+            # 計算該工作在同一天的流水號
+            # 從資料庫查詢該工作在同一天的所有報名記錄
+            same_day_count = db.query(ApplicationModel).filter(
+                ApplicationModel.job_id == job_id,
+                func.date(ApplicationModel.applied_at) == today_date
+            ).count()
+            
+            # 流水號 = 當天報名數量 + 1（3位數，補零）
+            sequence_number = same_day_count + 1
+            sequence_str = f"{sequence_number:03d}"
+            
+            # 組合報名編號：工作編號-日期-流水號
+            application_id = f"{job_id}-{today}-{sequence_str}"
+            
+            applied_at = datetime.datetime.now()
+            
+            # 建立資料庫記錄
+            application_model = ApplicationModel(
+                id=application_id,
+                job_id=job_id,
+                user_id=user_id,
+                user_name=user_name,
+                shift=shift,
+                applied_at=applied_at
+            )
+            
+            db.add(application_model)
+            db.commit()
+            db.refresh(application_model)
+            
+            # 轉換為 Pydantic 模型
+            application = Application(
+                id=application_model.id,
+                job_id=application_model.job_id,
+                user_id=application_model.user_id,
+                user_name=application_model.user_name,
+                shift=application_model.shift,
+                applied_at=application_model.applied_at.strftime('%Y-%m-%d %H:%M:%S')
+            )
+            
+            return application
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            if should_close:
+                db.close()
     
-    def get_user_application_for_job(self, user_id: str, job_id: str) -> Optional[Application]:
+    def get_user_application_for_job(self, user_id: str, job_id: str, db: Optional[Session] = None) -> Optional[Application]:
         """取得使用者對特定工作的報名記錄"""
-        user_app_ids = self.user_applications.get(user_id, [])
-        for app_id in user_app_ids:
-            app = self.applications.get(app_id)
-            if app and app.job_id == job_id:
-                return app
-        return None
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            app_model = db.query(ApplicationModel).filter(
+                ApplicationModel.user_id == user_id,
+                ApplicationModel.job_id == job_id
+            ).first()
+            
+            if not app_model:
+                return None
+            
+            return Application(
+                id=app_model.id,
+                job_id=app_model.job_id,
+                user_id=app_model.user_id,
+                user_name=app_model.user_name,
+                shift=app_model.shift,
+                applied_at=app_model.applied_at.strftime('%Y-%m-%d %H:%M:%S')
+            )
+        finally:
+            if should_close:
+                db.close()
     
-    def cancel_application(self, user_id: str, job_id: str) -> Tuple[bool, Optional[Application]]:
+    def cancel_application(self, user_id: str, job_id: str, db: Optional[Session] = None) -> Tuple[bool, Optional[Application]]:
         """
         取消報名
         
         參數:
             user_id: 使用者ID
             job_id: 工作ID
+            db: 資料庫會話（可選）
         
         返回:
             tuple: (是否成功, 取消的報名記錄)
         """
-        application = self.get_user_application_for_job(user_id, job_id)
-        if not application:
-            return False, None
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
         
-        # 移除報名記錄
-        app_id = application.id
-        if app_id in self.applications:
-            del self.applications[app_id]
-        
-        # 更新索引
-        if user_id in self.user_applications:
-            if app_id in self.user_applications[user_id]:
-                self.user_applications[user_id].remove(app_id)
-        
-        if job_id in self.job_applications:
-            if app_id in self.job_applications[job_id]:
-                self.job_applications[job_id].remove(app_id)
-        
-        return True, application
+        try:
+            app_model = db.query(ApplicationModel).filter(
+                ApplicationModel.user_id == user_id,
+                ApplicationModel.job_id == job_id
+            ).first()
+            
+            if not app_model:
+                return False, None
+            
+            # 轉換為 Pydantic 模型（在刪除前）
+            application = Application(
+                id=app_model.id,
+                job_id=app_model.job_id,
+                user_id=app_model.user_id,
+                user_name=app_model.user_name,
+                shift=app_model.shift,
+                applied_at=app_model.applied_at.strftime('%Y-%m-%d %H:%M:%S')
+            )
+            
+            # 從資料庫刪除
+            db.delete(app_model)
+            db.commit()
+            
+            return True, application
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            if should_close:
+                db.close()
     
-    def get_job_applications(self, job_id: str) -> List[Application]:
+    def get_job_applications(self, job_id: str, db: Optional[Session] = None) -> List[Application]:
         """取得工作的所有報名記錄"""
-        app_ids = self.job_applications.get(job_id, [])
-        applications = []
-        for app_id in app_ids:
-            app = self.applications.get(app_id)
-            if app:
-                applications.append(app)
-        return applications
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            app_models = db.query(ApplicationModel).filter(
+                ApplicationModel.job_id == job_id
+            ).order_by(ApplicationModel.applied_at.desc()).all()
+            
+            return [
+                Application(
+                    id=app.id,
+                    job_id=app.job_id,
+                    user_id=app.user_id,
+                    user_name=app.user_name,
+                    shift=app.shift,
+                    applied_at=app.applied_at.strftime('%Y-%m-%d %H:%M:%S')
+                )
+                for app in app_models
+            ]
+        finally:
+            if should_close:
+                db.close()
     
-    def get_user_applications(self, user_id: str) -> List[Application]:
+    def get_user_applications(self, user_id: str, db: Optional[Session] = None) -> List[Application]:
         """
         取得使用者的所有報名記錄
         
         參數:
             user_id: 使用者ID
+            db: 資料庫會話（可選）
         
         返回:
             list: 報名記錄列表
         """
-        app_ids = self.user_applications.get(user_id, [])
-        applications = []
-        for app_id in app_ids:
-            app = self.applications.get(app_id)
-            if app:
-                applications.append(app)
-        # 按報名時間排序（最新的在前）
-        applications.sort(key=lambda x: x.applied_at, reverse=True)
-        return applications
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            app_models = db.query(ApplicationModel).filter(
+                ApplicationModel.user_id == user_id
+            ).order_by(ApplicationModel.applied_at.desc()).all()
+            
+            return [
+                Application(
+                    id=app.id,
+                    job_id=app.job_id,
+                    user_id=app.user_id,
+                    user_name=app.user_name,
+                    shift=app.shift,
+                    applied_at=app.applied_at.strftime('%Y-%m-%d %H:%M:%S')
+                )
+                for app in app_models
+            ]
+        finally:
+            if should_close:
+                db.close()
 
 # ==================== 模組 2.5: Google Geocoding 服務 ====================
 
@@ -483,97 +775,150 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 class AuthService:
     """認證服務"""
     
-    def __init__(self):
-        # 使用者儲存（實際應用中應該使用資料庫）
-        # 格式：{username: UserInDB}
-        self.users: Dict[str, UserInDB] = {}
-        # 使用者 ID 索引：{user_id: username}
-        self.user_ids: Dict[str, str] = {}
-        # LINE User ID 索引：{line_user_id: username}
-        self.line_user_ids: Dict[str, str] = {}
+    def __init__(self, db: Optional[Session] = None):
+        """
+        初始化認證服務
+        
+        參數:
+            db: 資料庫會話（可選，如果提供則使用，否則創建新會話）
+        """
+        self.db = db
         self._create_default_admin()
+    
+    def _get_db(self) -> Session:
+        """取得資料庫會話"""
+        if self.db:
+            return self.db
+        return SessionLocal()
     
     def _create_default_admin(self):
         """建立預設管理員帳號"""
-        default_admin_username = os.getenv("ADMIN_USERNAME", "admin")
-        default_admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
-        
-        if default_admin_username not in self.users:
-            admin_user = UserInDB(
-                id="USER-ADMIN-001",
-                username=default_admin_username,
-                email="admin@example.com",
-                full_name="系統管理員",
-                is_admin=True,
-                is_active=True,
-                created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                hashed_password=self._get_password_hash(default_admin_password)
-            )
-            self.users[default_admin_username] = admin_user
-            self.user_ids["USER-ADMIN-001"] = default_admin_username
-            print(f"✅ 已建立預設管理員帳號：{default_admin_username}")
+        db = self._get_db()
+        try:
+            default_admin_username = os.getenv("ADMIN_USERNAME", "admin")
+            default_admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+            
+            # bcrypt 限制密碼不能超過 72 字節，如果超過則截斷
+            if len(default_admin_password.encode('utf-8')) > 72:
+                default_admin_password = default_admin_password[:72]
+                print(f"⚠️  管理員密碼超過 72 字節，已自動截斷")
+            
+            # 檢查是否已存在
+            existing_user = db.query(UserModel).filter(UserModel.username == default_admin_username).first()
+            if not existing_user:
+                admin_user = UserModel(
+                    id="USER-ADMIN-001",
+                    username=default_admin_username,
+                    email="admin@example.com",
+                    full_name="系統管理員",
+                    is_admin=True,
+                    is_active=True,
+                    hashed_password=self._get_password_hash(default_admin_password)
+                )
+                db.add(admin_user)
+                db.commit()
+                print(f"✅ 已建立預設管理員帳號：{default_admin_username}")
+        except Exception as e:
+            db.rollback()
+            print(f"⚠️  建立預設管理員帳號失敗：{e}")
+        finally:
+            if not self.db:
+                db.close()
     
     def _get_password_hash(self, password: str) -> str:
-        """加密密碼"""
+        """
+        加密密碼
+        
+        bcrypt 限制密碼不能超過 72 字節，如果超過則截斷
+        """
+        # bcrypt 限制密碼長度為 72 字節
+        if len(password.encode('utf-8')) > 72:
+            password = password[:72]
         return pwd_context.hash(password)
     
     def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
         """驗證密碼"""
         return pwd_context.verify(plain_password, hashed_password)
     
-    def _get_next_user_id(self) -> str:
+    def _get_next_user_id(self, db: Optional[Session] = None) -> str:
         """取得下一個使用者編號"""
-        max_sequence = 0
-        for user_id in self.user_ids.keys():
-            if user_id.startswith('USER-') and len(user_id) > 9:
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            # 從資料庫查詢最大流水號
+            max_user = db.query(UserModel).filter(UserModel.id.like('USER-%')).order_by(UserModel.id.desc()).first()
+            
+            if max_user:
                 try:
-                    sequence = int(user_id.split('-')[-1])
-                    max_sequence = max(max_sequence, sequence)
+                    sequence = int(max_user.id.split('-')[-1])
+                    next_sequence = sequence + 1
                 except ValueError:
-                    continue
-        
-        next_sequence = max_sequence + 1
-        return f"USER-{next_sequence:03d}"
+                    next_sequence = 1
+            else:
+                next_sequence = 1
+            
+            return f"USER-{next_sequence:03d}"
+        finally:
+            if should_close:
+                db.close()
     
-    def create_user(self, user_data: UserCreate) -> User:
+    def create_user(self, user_data: UserCreate, db: Optional[Session] = None) -> User:
         """建立使用者"""
-        # 檢查使用者名稱是否已存在
-        if user_data.username in self.users:
-            raise ValueError("使用者名稱已存在")
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
         
-        # 產生使用者 ID
-        user_id = self._get_next_user_id()
-        
-        # 建立使用者
-        user_in_db = UserInDB(
-            id=user_id,
-            username=user_data.username,
-            email=user_data.email,
-            full_name=user_data.full_name,
-            is_admin=user_data.is_admin,
-            is_active=True,
-            created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            hashed_password=self._get_password_hash(user_data.password)
-        )
-        
-        self.users[user_data.username] = user_in_db
-        self.user_ids[user_id] = user_data.username
-        
-        # 返回使用者（不包含密碼）
-        return User(
-            id=user_in_db.id,
-            username=user_in_db.username,
-            email=user_in_db.email,
-            full_name=user_in_db.full_name,
-            is_admin=user_in_db.is_admin,
-            is_active=user_in_db.is_active,
-            created_at=user_in_db.created_at,
-            line_user_id=user_in_db.line_user_id
-        )
+        try:
+            # 檢查使用者名稱是否已存在
+            existing_user = db.query(UserModel).filter(UserModel.username == user_data.username).first()
+            if existing_user:
+                raise ValueError("使用者名稱已存在")
+            
+            # 產生使用者 ID
+            user_id = self._get_next_user_id(db)
+            
+            # 建立使用者
+            user_model = UserModel(
+                id=user_id,
+                username=user_data.username,
+                email=user_data.email,
+                full_name=user_data.full_name,
+                is_admin=user_data.is_admin,
+                is_active=True,
+                hashed_password=self._get_password_hash(user_data.password)
+            )
+            
+            db.add(user_model)
+            db.commit()
+            db.refresh(user_model)
+            
+            # 返回使用者（不包含密碼）
+            return User(
+                id=user_model.id,
+                username=user_model.username,
+                email=user_model.email,
+                full_name=user_model.full_name,
+                is_admin=user_model.is_admin,
+                is_active=user_model.is_active,
+                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                line_user_id=user_model.line_user_id
+            )
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            if should_close:
+                db.close()
     
     def create_line_user(self, line_user_id: str, full_name: Optional[str] = None, 
                         phone: Optional[str] = None, address: Optional[str] = None, 
-                        email: Optional[str] = None) -> User:
+                        email: Optional[str] = None, db: Optional[Session] = None) -> User:
         """
         建立 LINE 使用者（不需要密碼）
         
@@ -583,116 +928,198 @@ class AuthService:
             phone: 手機號碼
             address: 地址
             email: 電子郵件
+            db: 資料庫會話（可選）
         
         返回:
             User: 建立的使用者物件
         """
-        # 使用 LINE User ID 作為使用者名稱（key）
-        username = line_user_id
-        
-        # 檢查是否已註冊（直接使用 LINE User ID 作為 key）
-        if username in self.users:
-            # 如果已存在，更新現有使用者資料（只更新非 None 的欄位）
-            user_in_db = self.users[username]
-            # 更新資料（如果提供新值則更新）
-            if full_name is not None and full_name:
-                user_in_db.full_name = full_name
-            if phone is not None and phone:
-                user_in_db.phone = phone
-            if address is not None and address:
-                user_in_db.address = address
-            if email is not None:  # email 可以是 None（可選欄位）
-                user_in_db.email = email
+        if db is None:
+            db = self._get_db()
+            should_close = True
         else:
-            # 產生使用者 ID
-            user_id = self._get_next_user_id()
+            should_close = False
+        
+        try:
+            # 使用 LINE User ID 作為使用者名稱（key）
+            username = line_user_id
             
-            # 建立使用者（LINE 使用者不需要密碼）
-            user_in_db = UserInDB(
-                id=user_id,
-                username=username,
-                email=email,
-                full_name=full_name or f"LINE使用者_{line_user_id[:8]}",
-                phone=phone,
-                address=address,
-                is_admin=False,
-                is_active=True,
-                created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                hashed_password=None,  # LINE 使用者不需要密碼
-                line_user_id=line_user_id
+            # 檢查是否已註冊（直接使用 LINE User ID 作為 key）
+            user_model = db.query(UserModel).filter(UserModel.username == username).first()
+            
+            if user_model:
+                # 如果已存在，更新現有使用者資料（只更新非 None 的欄位）
+                if full_name is not None and full_name:
+                    user_model.full_name = full_name
+                if phone is not None and phone:
+                    user_model.phone = phone
+                if address is not None and address:
+                    user_model.address = address
+                if email is not None:  # email 可以是 None（可選欄位）
+                    user_model.email = email
+                user_model.updated_at = datetime.datetime.now()
+                db.commit()
+                db.refresh(user_model)
+            else:
+                # 產生使用者 ID
+                user_id = self._get_next_user_id(db)
+                
+                # 建立使用者（LINE 使用者不需要密碼）
+                user_model = UserModel(
+                    id=user_id,
+                    username=username,
+                    email=email,
+                    full_name=full_name or f"LINE使用者_{line_user_id[:8]}",
+                    phone=phone,
+                    address=address,
+                    is_admin=False,
+                    is_active=True,
+                    hashed_password=None,  # LINE 使用者不需要密碼
+                    line_user_id=line_user_id
+                )
+                
+                db.add(user_model)
+                db.commit()
+                db.refresh(user_model)
+            
+            print(f"✅ 已建立 LINE 使用者：{username} (LINE User ID: {line_user_id})")
+            
+            # 返回使用者（不包含密碼）
+            return User(
+                id=user_model.id,
+                username=user_model.username,
+                email=user_model.email,
+                full_name=user_model.full_name,
+                phone=user_model.phone,
+                address=user_model.address,
+                is_admin=user_model.is_admin,
+                is_active=user_model.is_active,
+                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                line_user_id=user_model.line_user_id
             )
-            
-            self.users[username] = user_in_db
-            self.user_ids[user_id] = username
-            # 保留 line_user_ids 索引以向後兼容（但現在 username = line_user_id）
-            self.line_user_ids[line_user_id] = username
-        
-        print(f"✅ 已建立 LINE 使用者：{username} (LINE User ID: {line_user_id})")
-        
-        # 返回使用者（不包含密碼）
-        return User(
-            id=user_in_db.id,
-            username=user_in_db.username,
-            email=user_in_db.email,
-            full_name=user_in_db.full_name,
-            phone=user_in_db.phone,
-            address=user_in_db.address,
-            is_admin=user_in_db.is_admin,
-            is_active=user_in_db.is_active,
-            created_at=user_in_db.created_at,
-            line_user_id=user_in_db.line_user_id
-        )
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            if should_close:
+                db.close()
     
-    def get_user_by_username(self, username: str) -> Optional[UserInDB]:
+    def get_user_by_username(self, username: str, db: Optional[Session] = None) -> Optional[UserInDB]:
         """根據使用者名稱取得使用者"""
-        return self.users.get(username)
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            user_model = db.query(UserModel).filter(UserModel.username == username).first()
+            if not user_model:
+                return None
+            
+            return UserInDB(
+                id=user_model.id,
+                username=user_model.username,
+                email=user_model.email,
+                full_name=user_model.full_name,
+                phone=user_model.phone,
+                address=user_model.address,
+                is_admin=user_model.is_admin,
+                is_active=user_model.is_active,
+                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                line_user_id=user_model.line_user_id,
+                hashed_password=user_model.hashed_password
+            )
+        finally:
+            if should_close:
+                db.close()
     
-    def get_user_by_line_id(self, line_user_id: str) -> Optional[UserInDB]:
+    def get_user_by_line_id(self, line_user_id: str, db: Optional[Session] = None) -> Optional[UserInDB]:
         """根據 LINE User ID 取得使用者"""
-        # 直接使用 LINE User ID 作為使用者名稱
-        return self.users.get(line_user_id)
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            # 直接使用 LINE User ID 作為使用者名稱
+            user_model = db.query(UserModel).filter(UserModel.username == line_user_id).first()
+            if not user_model:
+                return None
+            
+            return UserInDB(
+                id=user_model.id,
+                username=user_model.username,
+                email=user_model.email,
+                full_name=user_model.full_name,
+                phone=user_model.phone,
+                address=user_model.address,
+                is_admin=user_model.is_admin,
+                is_active=user_model.is_active,
+                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                line_user_id=user_model.line_user_id,
+                hashed_password=user_model.hashed_password
+            )
+        finally:
+            if should_close:
+                db.close()
     
-    def is_line_user_registered(self, line_user_id: str) -> bool:
+    def is_line_user_registered(self, line_user_id: str, db: Optional[Session] = None) -> bool:
         """檢查 LINE 使用者是否已註冊"""
-        # 直接使用 LINE User ID 作為使用者名稱（key）檢查
-        return line_user_id in self.users
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            # 直接使用 LINE User ID 作為使用者名稱（key）檢查
+            user_model = db.query(UserModel).filter(UserModel.username == line_user_id).first()
+            return user_model is not None
+        finally:
+            if should_close:
+                db.close()
     
-    def delete_line_user(self, line_user_id: str) -> bool:
+    def delete_line_user(self, line_user_id: str, db: Optional[Session] = None) -> bool:
         """
         取消 LINE 使用者註冊
         
         參數:
             line_user_id: LINE User ID
+            db: 資料庫會話（可選）
         
         返回:
             bool: 是否成功取消
         """
-        username = line_user_id
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
         
-        if username not in self.users:
-            return False
-        
-        user = self.users.get(username)
-        if not user:
-            return False
-        
-        # 取消使用者註冊
-        user_id = user.id
-        del self.users[username]
-        
-        # 刪除索引
-        if user_id in self.user_ids:
-            del self.user_ids[user_id]
-        
-        if line_user_id in self.line_user_ids:
-            del self.line_user_ids[line_user_id]
-        
-        print(f"✅ 已取消 LINE 使用者註冊：{username} (LINE User ID: {line_user_id})")
-        return True
+        try:
+            username = line_user_id
+            
+            user_model = db.query(UserModel).filter(UserModel.username == username).first()
+            if not user_model:
+                return False
+            
+            # 刪除使用者
+            db.delete(user_model)
+            db.commit()
+            
+            print(f"✅ 已取消 LINE 使用者註冊：{username} (LINE User ID: {line_user_id})")
+            return True
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            if should_close:
+                db.close()
     
-    def authenticate_user(self, username: str, password: str) -> Optional[UserInDB]:
+    def authenticate_user(self, username: str, password: str, db: Optional[Session] = None) -> Optional[UserInDB]:
         """驗證使用者"""
-        user = self.get_user_by_username(username)
+        user = self.get_user_by_username(username, db)
         if not user:
             return None
         # LINE 使用者可能沒有密碼，跳過密碼驗證
@@ -742,9 +1169,6 @@ class AuthService:
         if user is None:
             raise credentials_exception
         return user
-
-# 全域認證服務實例
-auth_service = AuthService()
 
 # 依賴注入函數
 def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
@@ -1677,7 +2101,7 @@ class JobHandler:
                         "altText": "主選單",
                         "template": {
                             "type": "buttons",
-                            "title": "Good Job 報名系統",
+                            "title": "Good Jobs 報名系統",
                             "text": menu_text,
                             "actions": actions
                         }
@@ -2155,7 +2579,7 @@ class JobHandler:
         
         self.message_service.send_buttons_template(
             reply_token,
-            "Good Job 報名系統",
+            "Good Jobs 報名系統",
             menu_text,
             actions
         )
@@ -2163,9 +2587,18 @@ class JobHandler:
 # ==================== 模組 5: FastAPI 後台 API ====================
 
 # 建立 FastAPI 應用程式
-api_app = FastAPI(title="Good Job 報名系統 API", version="1.0.0")
+api_app = FastAPI(title="Good Jobs 報名系統 API", version="1.0.0")
+
+# 初始化資料庫
+try:
+    init_db()
+    print("✅ 資料庫初始化完成")
+except Exception as e:
+    print(f"⚠️  資料庫初始化失敗：{e}")
+    print("⚠️  將繼續使用記憶體儲存（資料不會持久化）")
 
 # 全域服務實例（實際應用中應該使用依賴注入）
+auth_service = AuthService()
 job_service = JobService()
 application_service = ApplicationService()
 
@@ -2341,28 +2774,48 @@ def get_job_applications(
 @api_app.get("/api/applications", response_model=List[Application])
 def get_all_applications(current_user: UserInDB = Depends(require_admin)):
     """取得所有報名記錄（需要管理員權限）"""
-    return list(application_service.applications.values())
+    db = SessionLocal()
+    try:
+        app_models = db.query(ApplicationModel).order_by(ApplicationModel.applied_at.desc()).all()
+        return [
+            Application(
+                id=app.id,
+                job_id=app.job_id,
+                user_id=app.user_id,
+                user_name=app.user_name,
+                shift=app.shift,
+                applied_at=app.applied_at.strftime('%Y-%m-%d %H:%M:%S')
+            )
+            for app in app_models
+        ]
+    finally:
+        db.close()
 
 # ==================== 使用者管理 API（需要管理員權限） ====================
 
 @api_app.get("/api/users", response_model=List[User])
 def get_all_users(current_user: UserInDB = Depends(require_admin)):
     """取得所有使用者列表（需要管理員權限）"""
-    users = []
-    for user_in_db in auth_service.users.values():
-        users.append(User(
-            id=user_in_db.id,
-            username=user_in_db.username,
-            email=user_in_db.email,
-            full_name=user_in_db.full_name,
-            phone=user_in_db.phone,
-            address=user_in_db.address,
-            is_admin=user_in_db.is_admin,
-            is_active=user_in_db.is_active,
-            created_at=user_in_db.created_at,
-            line_user_id=user_in_db.line_user_id
-        ))
-    return users
+    db = SessionLocal()
+    try:
+        user_models = db.query(UserModel).order_by(UserModel.created_at.desc()).all()
+        return [
+            User(
+                id=user.id,
+                username=user.username,
+                email=user.email,
+                full_name=user.full_name,
+                phone=user.phone,
+                address=user.address,
+                is_admin=user.is_admin,
+                is_active=user.is_active,
+                created_at=user.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                line_user_id=user.line_user_id
+            )
+            for user in user_models
+        ]
+    finally:
+        db.close()
 
 @api_app.get("/api/users/{username}", response_model=User)
 def get_user(
@@ -2389,7 +2842,7 @@ def get_user(
 # ==================== 模組 6: LINE Bot 主應用程式 ====================
 
 class PartTimeJobBot:
-    """Good Job 報名系統主應用程式"""
+    """Good Jobs 報名系統主應用程式"""
     
     def __init__(self, channel_access_token: str, channel_secret: Optional[str] = None, auth_service: Optional[AuthService] = None):
         # 初始化服務
@@ -2620,15 +3073,16 @@ class PartTimeJobBot:
         if use_threading:
             import threading
             def run_server():
-                self.flask_app.run(port=port, debug=debug, use_reloader=False, use_debugger=False)
+                self.flask_app.run(host='0.0.0.0', port=port, debug=debug, use_reloader=False, use_debugger=False)
             
             thread = threading.Thread(target=run_server, daemon=True)
             thread.start()
-            print(f"✅ LINE Bot 伺服器已在背景啟動，監聽 port {port}")
+            print(f"✅ LINE Bot 伺服器已在背景啟動，監聽 0.0.0.0:{port}")
             print("⚠️  注意：在 Jupyter 中，伺服器會在背景執行")
             print("   要停止伺服器，請重新啟動 kernel")
         else:
-            self.flask_app.run(port=port, debug=debug)
+            self.flask_app.run(host='0.0.0.0', port=port, debug=debug)
+            print(f"✅ LINE Bot 伺服器已啟動，監聽 0.0.0.0:{port}")
 
 # ==================== 測試資料建立 ====================
 
@@ -2636,10 +3090,15 @@ def create_sample_jobs(job_service: JobService):
     """建立測試工作資料"""
     from datetime import date, timedelta
     
-    # 檢查是否已有工作
-    if len(job_service.jobs) > 0:
-        print("ℹ️  已有工作資料，跳過建立測試資料")
-        return
+    # 檢查是否已有工作（從資料庫查詢）
+    db = SessionLocal()
+    try:
+        existing_jobs = db.query(JobModel).count()
+        if existing_jobs > 0:
+            print("ℹ️  已有工作資料，跳過建立測試資料")
+            return
+    finally:
+        db.close()
     
     # 建立幾個測試工作
     sample_jobs = [
