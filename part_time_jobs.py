@@ -11,8 +11,9 @@
 6. PartTimeJobBot - 主應用程式
 """
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Depends, status, Security
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials, OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Dict, Optional, Tuple
 import requests
 from flask import Flask, request
@@ -26,6 +27,9 @@ import os
 import hmac
 import hashlib
 import base64
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from datetime import timedelta
 
 # ==================== 資料模型 ====================
 
@@ -37,6 +41,8 @@ class Job(BaseModel):
     date: str  # 工作日期，格式：YYYY-MM-DD
     shifts: List[str]  # 班別列表，例如 ["早班:08-19", "中班:14-23", "晚班:22-07"]
     location_image_url: Optional[str] = None  # 工作地點圖片 URL
+    latitude: Optional[float] = None  # 緯度
+    longitude: Optional[float] = None  # 經度
 
 class Application(BaseModel):
     """報名記錄模型"""
@@ -54,6 +60,46 @@ class CreateJobRequest(BaseModel):
     date: str = Field(..., description="工作日期，格式：YYYY-MM-DD")
     shifts: List[str] = Field(..., description="班別列表")
     location_image_url: Optional[str] = Field(None, description="工作地點圖片 URL")
+    latitude: Optional[float] = Field(None, description="緯度（可選，未提供時會自動從地址取得）")
+    longitude: Optional[float] = Field(None, description="經度（可選，未提供時會自動從地址取得）")
+
+# ==================== 認證相關資料模型 ====================
+
+class User(BaseModel):
+    """使用者資料模型"""
+    id: str
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_admin: bool = False
+    is_active: bool = True
+    created_at: str
+
+class UserInDB(User):
+    """資料庫中的使用者模型（包含密碼）"""
+    hashed_password: str
+
+class UserCreate(BaseModel):
+    """建立使用者請求"""
+    username: str = Field(..., description="使用者名稱")
+    password: str = Field(..., min_length=6, description="密碼（至少6個字元）")
+    email: Optional[EmailStr] = Field(None, description="電子郵件")
+    full_name: Optional[str] = Field(None, description="全名")
+    is_admin: bool = Field(False, description="是否為管理員")
+
+class UserLogin(BaseModel):
+    """使用者登入請求"""
+    username: str = Field(..., description="使用者名稱")
+    password: str = Field(..., description="密碼")
+
+class Token(BaseModel):
+    """JWT Token 回應"""
+    access_token: str
+    token_type: str = "bearer"
+
+class TokenData(BaseModel):
+    """Token 資料"""
+    username: Optional[str] = None
 
 # ==================== 模組 1: 工作服務 (JobService) ====================
 
@@ -101,13 +147,27 @@ class JobService:
         # 工作編號格式：JOB+流水號（例如：JOB001, JOB002）
         job_id = self._get_next_job_id()
         
+        # 取得座標（如果未提供）
+        latitude = job_data.latitude
+        longitude = job_data.longitude
+        
+        if latitude is None or longitude is None:
+            # 嘗試從地址取得座標
+            coordinates = geocoding_service.get_coordinates(job_data.location)
+            if coordinates:
+                latitude, longitude = coordinates
+            else:
+                print(f"⚠️  無法取得工作地點座標：{job_data.location}")
+        
         job = Job(
             id=job_id,
             name=job_data.name,
             location=job_data.location,
             date=job_data.date,
             shifts=job_data.shifts,
-            location_image_url=job_data.location_image_url
+            location_image_url=job_data.location_image_url,
+            latitude=latitude,
+            longitude=longitude
         )
         
         self.jobs[job_id] = job
@@ -279,6 +339,303 @@ class ApplicationService:
         # 按報名時間排序（最新的在前）
         applications.sort(key=lambda x: x.applied_at, reverse=True)
         return applications
+
+# ==================== 模組 2.5: Google Geocoding 服務 ====================
+
+# Google Maps API Key 設定（可在主程式區塊覆蓋）
+_DEFAULT_GOOGLE_MAPS_API_KEY = "AIzaSyDqcXhRP7pJmQIlO_F86Oh8lSmEtOUgXaw"
+
+class GeocodingService:
+    """Google Maps Geocoding 服務"""
+    
+    def __init__(self, default_api_key: str = ""):
+        # 優先使用環境變數，其次使用傳入的預設值，最後使用模組預設值
+        env_key = os.getenv("GOOGLE_MAPS_API_KEY", "")
+        if env_key:
+            self.api_key = env_key
+        elif default_api_key:
+            self.api_key = default_api_key
+        else:
+            self.api_key = _DEFAULT_GOOGLE_MAPS_API_KEY
+        self.geocoding_url = "https://maps.googleapis.com/maps/api/geocode/json"
+    
+    def get_coordinates(self, address: str) -> Optional[Tuple[float, float]]:
+        """
+        根據地址取得經緯度座標
+        
+        參數:
+            address: 地址字串
+        
+        返回:
+            Optional[Tuple[float, float]]: (緯度, 經度) 或 None（如果失敗）
+        """
+        if not self.api_key:
+            print("⚠️  警告：未設定 GOOGLE_MAPS_API_KEY，無法取得座標")
+            return None
+        
+        try:
+            params = {
+                "address": address,
+                "key": self.api_key,
+                "language": "zh-TW"  # 使用繁體中文
+            }
+            
+            response = requests.get(self.geocoding_url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("status") == "OK" and data.get("results"):
+                location = data["results"][0]["geometry"]["location"]
+                latitude = location.get("lat")
+                longitude = location.get("lng")
+                
+                if latitude and longitude:
+                    print(f"✅ 成功取得座標：{address} -> ({latitude}, {longitude})")
+                    return (float(latitude), float(longitude))
+                else:
+                    print(f"⚠️  警告：無法從回應中取得座標：{address}")
+                    return None
+            else:
+                status = data.get("status", "UNKNOWN")
+                print(f"⚠️  Geocoding API 錯誤：{status} - {address}")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Geocoding API 請求錯誤：{e}")
+            return None
+        except (KeyError, ValueError, IndexError) as e:
+            print(f"❌ 解析 Geocoding 回應錯誤：{e}")
+            return None
+        except Exception as e:
+            print(f"❌ 取得座標時發生未預期錯誤：{e}")
+            return None
+    
+    def get_address_from_coordinates(self, latitude: float, longitude: float) -> Optional[str]:
+        """
+        根據經緯度取得地址（反向地理編碼）
+        
+        參數:
+            latitude: 緯度
+            longitude: 經度
+        
+        返回:
+            Optional[str]: 地址字串或 None（如果失敗）
+        """
+        if not self.api_key:
+            print("⚠️  警告：未設定 GOOGLE_MAPS_API_KEY，無法取得地址")
+            return None
+        
+        try:
+            params = {
+                "latlng": f"{latitude},{longitude}",
+                "key": self.api_key,
+                "language": "zh-TW"  # 使用繁體中文
+            }
+            
+            response = requests.get(self.geocoding_url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("status") == "OK" and data.get("results"):
+                formatted_address = data["results"][0].get("formatted_address")
+                if formatted_address:
+                    print(f"✅ 成功取得地址：({latitude}, {longitude}) -> {formatted_address}")
+                    return formatted_address
+                else:
+                    print(f"⚠️  警告：無法從回應中取得地址：({latitude}, {longitude})")
+                    return None
+            else:
+                status = data.get("status", "UNKNOWN")
+                print(f"⚠️  Reverse Geocoding API 錯誤：{status} - ({latitude}, {longitude})")
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Reverse Geocoding API 請求錯誤：{e}")
+            return None
+        except (KeyError, ValueError) as e:
+            print(f"❌ 解析 Reverse Geocoding 回應錯誤：{e}")
+            return None
+        except Exception as e:
+            print(f"❌ 取得地址時發生未預期錯誤：{e}")
+            return None
+
+# 全域 Geocoding 服務實例（稍後在主程式區塊會重新初始化）
+geocoding_service = GeocodingService()
+
+# ==================== 模組 2.5: 認證服務 (AuthService) ====================
+
+# JWT 設定
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-this-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 天
+
+# 密碼加密設定
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# OAuth2 設定
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+
+class AuthService:
+    """認證服務"""
+    
+    def __init__(self):
+        # 使用者儲存（實際應用中應該使用資料庫）
+        # 格式：{username: UserInDB}
+        self.users: Dict[str, UserInDB] = {}
+        # 使用者 ID 索引：{user_id: username}
+        self.user_ids: Dict[str, str] = {}
+        self._create_default_admin()
+    
+    def _create_default_admin(self):
+        """建立預設管理員帳號"""
+        default_admin_username = os.getenv("ADMIN_USERNAME", "admin")
+        default_admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
+        
+        if default_admin_username not in self.users:
+            admin_user = UserInDB(
+                id="USER-ADMIN-001",
+                username=default_admin_username,
+                email="admin@example.com",
+                full_name="系統管理員",
+                is_admin=True,
+                is_active=True,
+                created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                hashed_password=self._get_password_hash(default_admin_password)
+            )
+            self.users[default_admin_username] = admin_user
+            self.user_ids["USER-ADMIN-001"] = default_admin_username
+            print(f"✅ 已建立預設管理員帳號：{default_admin_username}")
+    
+    def _get_password_hash(self, password: str) -> str:
+        """加密密碼"""
+        return pwd_context.hash(password)
+    
+    def _verify_password(self, plain_password: str, hashed_password: str) -> bool:
+        """驗證密碼"""
+        return pwd_context.verify(plain_password, hashed_password)
+    
+    def _get_next_user_id(self) -> str:
+        """取得下一個使用者編號"""
+        max_sequence = 0
+        for user_id in self.user_ids.keys():
+            if user_id.startswith('USER-') and len(user_id) > 9:
+                try:
+                    sequence = int(user_id.split('-')[-1])
+                    max_sequence = max(max_sequence, sequence)
+                except ValueError:
+                    continue
+        
+        next_sequence = max_sequence + 1
+        return f"USER-{next_sequence:03d}"
+    
+    def create_user(self, user_data: UserCreate) -> User:
+        """建立使用者"""
+        # 檢查使用者名稱是否已存在
+        if user_data.username in self.users:
+            raise ValueError("使用者名稱已存在")
+        
+        # 產生使用者 ID
+        user_id = self._get_next_user_id()
+        
+        # 建立使用者
+        user_in_db = UserInDB(
+            id=user_id,
+            username=user_data.username,
+            email=user_data.email,
+            full_name=user_data.full_name,
+            is_admin=user_data.is_admin,
+            is_active=True,
+            created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            hashed_password=self._get_password_hash(user_data.password)
+        )
+        
+        self.users[user_data.username] = user_in_db
+        self.user_ids[user_id] = user_data.username
+        
+        # 返回使用者（不包含密碼）
+        return User(
+            id=user_in_db.id,
+            username=user_in_db.username,
+            email=user_in_db.email,
+            full_name=user_in_db.full_name,
+            is_admin=user_in_db.is_admin,
+            is_active=user_in_db.is_active,
+            created_at=user_in_db.created_at
+        )
+    
+    def get_user_by_username(self, username: str) -> Optional[UserInDB]:
+        """根據使用者名稱取得使用者"""
+        return self.users.get(username)
+    
+    def authenticate_user(self, username: str, password: str) -> Optional[UserInDB]:
+        """驗證使用者"""
+        user = self.get_user_by_username(username)
+        if not user:
+            return None
+        if not self._verify_password(password, user.hashed_password):
+            return None
+        if not user.is_active:
+            return None
+        return user
+    
+    def create_access_token(self, data: dict, expires_delta: Optional[timedelta] = None) -> str:
+        """建立 JWT Token"""
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+        return encoded_jwt
+    
+    def verify_token(self, token: str) -> Optional[TokenData]:
+        """驗證 JWT Token"""
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            username: Optional[str] = payload.get("sub")
+            if username is None:
+                return None
+            return TokenData(username=username)
+        except JWTError:
+            return None
+    
+    def get_current_user_from_token(self, token: str) -> UserInDB:
+        """從 Token 取得使用者（內部方法）"""
+        credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="無法驗證憑證",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        token_data = self.verify_token(token)
+        if token_data is None or token_data.username is None:
+            raise credentials_exception
+        user = self.get_user_by_username(token_data.username)
+        if user is None:
+            raise credentials_exception
+        return user
+
+# 全域認證服務實例
+auth_service = AuthService()
+
+# 依賴注入函數
+def get_current_user(token: str = Depends(oauth2_scheme)) -> UserInDB:
+    """取得當前使用者（從 Token）"""
+    return auth_service.get_current_user_from_token(token)
+
+def get_current_active_user(current_user: UserInDB = Depends(get_current_user)) -> UserInDB:
+    """取得當前活躍使用者"""
+    if not current_user.is_active:
+        raise HTTPException(status_code=400, detail="使用者帳號已停用")
+    return current_user
+
+def require_admin(current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+    """要求管理員權限"""
+    if not current_user.is_admin:
+        raise HTTPException(status_code=403, detail="需要管理員權限")
+    return current_user
 
 # ==================== 模組 3: LINE 訊息服務 (LineMessageService) ====================
 
@@ -943,9 +1300,137 @@ api_app = FastAPI(title="兼職工作報名系統 API", version="1.0.0")
 job_service = JobService()
 application_service = ApplicationService()
 
-@api_app.post("/api/jobs", response_model=Job)
-def create_job(job_data: CreateJobRequest):
-    """建立新工作"""
+# ==================== 認證相關 API ====================
+
+@api_app.post("/api/auth/register", response_model=User, status_code=status.HTTP_201_CREATED)
+def register(user_data: UserCreate):
+    """註冊新使用者"""
+    try:
+        user = auth_service.create_user(user_data)
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"註冊失敗：{str(e)}")
+
+@api_app.post("/api/auth/login", response_model=Token)
+def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    """使用者登入"""
+    user = auth_service.authenticate_user(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="使用者名稱或密碼錯誤",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth_service.create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@api_app.get("/api/auth/me", response_model=User)
+def get_current_user_info(current_user: UserInDB = Depends(get_current_active_user)):
+    """取得當前使用者資訊"""
+    return User(
+        id=current_user.id,
+        username=current_user.username,
+        email=current_user.email,
+        full_name=current_user.full_name,
+        is_admin=current_user.is_admin,
+        is_active=current_user.is_active,
+        created_at=current_user.created_at
+    )
+
+# ==================== 地理編碼 API ====================
+
+class GeocodeRequest(BaseModel):
+    """地理編碼請求"""
+    address: str = Field(..., description="地址")
+
+class GeocodeResponse(BaseModel):
+    """地理編碼回應"""
+    address: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    success: bool
+    message: Optional[str] = None
+
+class ReverseGeocodeRequest(BaseModel):
+    """反向地理編碼請求"""
+    latitude: float = Field(..., description="緯度")
+    longitude: float = Field(..., description="經度")
+
+class ReverseGeocodeResponse(BaseModel):
+    """反向地理編碼回應"""
+    latitude: float
+    longitude: float
+    address: Optional[str] = None
+    success: bool
+    message: Optional[str] = None
+
+@api_app.post("/api/geocode", response_model=GeocodeResponse)
+def geocode_address(
+    request: GeocodeRequest,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """根據地址取得經緯度座標（需要認證）"""
+    coordinates = geocoding_service.get_coordinates(request.address)
+    
+    if coordinates:
+        latitude, longitude = coordinates
+        return GeocodeResponse(
+            address=request.address,
+            latitude=latitude,
+            longitude=longitude,
+            success=True,
+            message="成功取得座標"
+        )
+    else:
+        return GeocodeResponse(
+            address=request.address,
+            latitude=None,
+            longitude=None,
+            success=False,
+            message="無法取得座標，請檢查地址或 Google Maps API Key 設定"
+        )
+
+@api_app.post("/api/geocode/reverse", response_model=ReverseGeocodeResponse)
+def reverse_geocode(
+    request: ReverseGeocodeRequest,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """根據經緯度取得地址（反向地理編碼，需要認證）"""
+    address = geocoding_service.get_address_from_coordinates(
+        request.latitude,
+        request.longitude
+    )
+    
+    if address:
+        return ReverseGeocodeResponse(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            address=address,
+            success=True,
+            message="成功取得地址"
+        )
+    else:
+        return ReverseGeocodeResponse(
+            latitude=request.latitude,
+            longitude=request.longitude,
+            address=None,
+            success=False,
+            message="無法取得地址，請檢查座標或 Google Maps API Key 設定"
+        )
+
+# ==================== 工作管理 API（需要認證） ====================
+
+@api_app.post("/api/jobs", response_model=Job, status_code=status.HTTP_201_CREATED)
+def create_job(
+    job_data: CreateJobRequest,
+    current_user: UserInDB = Depends(require_admin)
+):
+    """建立新工作（需要管理員權限）"""
     try:
         job = job_service.create_job(job_data)
         return job
@@ -953,21 +1438,27 @@ def create_job(job_data: CreateJobRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 @api_app.get("/api/jobs", response_model=List[Job])
-def get_all_jobs():
-    """取得所有工作"""
+def get_all_jobs(current_user: UserInDB = Depends(get_current_active_user)):
+    """取得所有工作（需要認證）"""
     return job_service.get_all_jobs()
 
 @api_app.get("/api/jobs/{job_id}", response_model=Job)
-def get_job(job_id: str):
-    """取得特定工作"""
+def get_job(
+    job_id: str,
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """取得特定工作（需要認證）"""
     job = job_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="工作不存在")
     return job
 
 @api_app.get("/api/jobs/{job_id}/applications", response_model=List[Application])
-def get_job_applications(job_id: str):
-    """取得工作的報名清單"""
+def get_job_applications(
+    job_id: str,
+    current_user: UserInDB = Depends(require_admin)
+):
+    """取得工作的報名清單（需要管理員權限）"""
     job = job_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="工作不存在")
@@ -976,9 +1467,46 @@ def get_job_applications(job_id: str):
     return applications
 
 @api_app.get("/api/applications", response_model=List[Application])
-def get_all_applications():
-    """取得所有報名記錄"""
+def get_all_applications(current_user: UserInDB = Depends(require_admin)):
+    """取得所有報名記錄（需要管理員權限）"""
     return list(application_service.applications.values())
+
+# ==================== 使用者管理 API（需要管理員權限） ====================
+
+@api_app.get("/api/users", response_model=List[User])
+def get_all_users(current_user: UserInDB = Depends(require_admin)):
+    """取得所有使用者列表（需要管理員權限）"""
+    users = []
+    for user_in_db in auth_service.users.values():
+        users.append(User(
+            id=user_in_db.id,
+            username=user_in_db.username,
+            email=user_in_db.email,
+            full_name=user_in_db.full_name,
+            is_admin=user_in_db.is_admin,
+            is_active=user_in_db.is_active,
+            created_at=user_in_db.created_at
+        ))
+    return users
+
+@api_app.get("/api/users/{username}", response_model=User)
+def get_user(
+    username: str,
+    current_user: UserInDB = Depends(require_admin)
+):
+    """取得特定使用者資訊（需要管理員權限）"""
+    user = auth_service.get_user_by_username(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    return User(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        full_name=user.full_name,
+        is_admin=user.is_admin,
+        is_active=user.is_active,
+        created_at=user.created_at
+    )
 
 # ==================== 模組 6: LINE Bot 主應用程式 ====================
 
@@ -1184,14 +1712,14 @@ def create_sample_jobs(job_service: JobService):
         },
         {
             "name": "活動工作人員",
-            "location": "新北市板橋區文化路一段188巷",
+            "location": "桃園市桃園區中正五街196號",
             "date": (date.today() + timedelta(days=5)).strftime('%Y-%m-%d'),
             "shifts": ["早班:09-18", "晚班:18-22"],
             "location_image_url": None
         },
         {
             "name": "展覽導覽員",
-            "location": "台北市士林區至善路二段221號",
+            "location": "新北市鶯歌區鳳吉一街193號",
             "date": (date.today() + timedelta(days=7)).strftime('%Y-%m-%d'),
             "shifts": ["早班:10-18"],
             "location_image_url": None
@@ -1207,11 +1735,19 @@ def create_sample_jobs(job_service: JobService):
 
 # ==================== 主程式 ====================
 
-CHANNEL_ACCESS_TOKEN = "oZPbAQXckPCTbRPN67GNPlyG/MqToO3haMOIvWOI35PGg8ZdBYEVtOc1KdJ+zYLJjOJ8+/YGaEk4f7m6W1RavpsYIp+5k1taVZ47HYboydFvMbTQ4rxXlNGysl2q0sM79gbzVuGnzHkPL2mf9SfU1gdB04t89/1O/w1cDnyilFU="
 # Channel Secret 用於驗證 Webhook 請求來源（從 LINE Developers Console 取得）
 # 如果未設定，系統會跳過簽名驗證（僅用於開發測試）
+LINE_CHANNEL_ACCESS_TOKEN = "oZPbAQXckPCTbRPN67GNPlyG/MqToO3haMOIvWOI35PGg8ZdBYEVtOc1KdJ+zYLJjOJ8+/YGaEk4f7m6W1RavpsYIp+5k1taVZ47HYboydFvMbTQ4rxXlNGysl2q0sM79gbzVuGnzHkPL2mf9SfU1gdB04t89/1O/w1cDnyilFU="
 LINE_CHANNEL_SECRET = "793a80c83472d9ddf0451cad2dd4077c"
+#
+CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", LINE_CHANNEL_ACCESS_TOKEN)
 CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", LINE_CHANNEL_SECRET)
+
+# Google Maps API Key（從環境變數或使用預設值）
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "AIzaSyDqcXhRP7pJmQIlO_F86Oh8lSmEtOUgXaw")
+
+# 重新初始化 Geocoding 服務以使用正確的 API Key
+geocoding_service = GeocodingService(default_api_key=GOOGLE_MAPS_API_KEY)
 
 # 建立測試資料（在模組層級建立，每個進程都會執行，但有檢查機制避免重複）
 create_sample_jobs(job_service)

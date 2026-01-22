@@ -5,10 +5,13 @@
 ## 功能特色
 
 ### 後台功能（FastAPI）
-1. **發佈工作** - 透過 API 發佈新的兼職工作
-2. **查詢工作** - 取得所有工作或特定工作資訊
-3. **查詢報名清單** - 取得特定工作的所有報名記錄
-4. **查詢所有報名** - 取得系統中所有報名記錄
+1. **使用者認證** - JWT 認證機制，支援登入和註冊
+2. **權限管理** - 區分管理員和一般使用者權限
+3. **發佈工作** - 透過 API 發佈新的兼職工作（需要管理員權限）
+4. **查詢工作** - 取得所有工作或特定工作資訊（需要認證）
+5. **查詢報名清單** - 取得特定工作的所有報名記錄（需要管理員權限）
+6. **查詢所有報名** - 取得系統中所有報名記錄（需要管理員權限）
+7. **使用者管理** - 管理使用者帳號（需要管理員權限）
 
 ### 前台功能（LINE Bot）
 1. **查看工作列表** - 顯示所有可報名的工作（日期大於等於今天）
@@ -30,23 +33,32 @@
    - 自動產生報名編號（格式：工作編號-日期-流水號，例如：JOB001-20260110-001）
    - 支援使用者報名索引和工作報名索引
 
-3. **LineMessageService** - LINE 訊息發送服務
+3. **AuthService** - 認證和權限管理服務
+   - 使用者註冊和登入
+   - JWT Token 產生和驗證
+   - 密碼加密（使用 bcrypt）
+   - 權限檢查（管理員/一般使用者）
+   - 預設管理員帳號建立
+
+4. **LineMessageService** - LINE 訊息發送服務
    - 發送文字訊息
    - 發送 Flex 訊息
    - 發送按鈕範本
    - 批次發送多個訊息
 
-4. **JobHandler** - 工作事件處理器
+5. **JobHandler** - 工作事件處理器
    - 處理所有 LINE Bot 互動邏輯
    - 工作列表顯示
    - 報名流程處理
    - 取消報名流程處理
 
-5. **FastAPI 路由** - 後台管理 API
+6. **FastAPI 路由** - 後台管理 API
    - RESTful API 設計
+   - JWT 認證保護
+   - 權限管理
    - 自動產生 API 文件
 
-6. **PartTimeJobBot** - 主應用程式
+7. **PartTimeJobBot** - 主應用程式
    - 整合所有服務
    - 處理 LINE Webhook
    - 管理伺服器啟動
@@ -87,11 +99,40 @@ export LINE_CHANNEL_ACCESS_TOKEN="your_channel_access_token_here"
 export LINE_CHANNEL_SECRET="your_channel_secret_here"
 ```
 
+**設定 JWT Secret Key（用於 API 認證）：**
+```bash
+export JWT_SECRET_KEY="your-secret-key-here"
+```
+
+**設定 Google Maps API Key（用於取得座標）：**
+```bash
+export GOOGLE_MAPS_API_KEY="your-google-maps-api-key-here"
+```
+
+**設定預設管理員帳號（可選）：**
+```bash
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="admin123"
+```
+
+**取得 Google Maps API Key：**
+1. 前往 [Google Cloud Console](https://console.cloud.google.com/)
+2. 建立新專案或選擇現有專案
+3. 啟用「Geocoding API」
+4. 建立 API 金鑰
+5. 將 API 金鑰設定為環境變數 `GOOGLE_MAPS_API_KEY`
+
+**注意：**
+- Google Maps API 有使用限制，請參考 [Google Maps Platform 定價](https://developers.google.com/maps/billing-and-pricing/pricing)
+- 建議設定 API 金鑰的使用限制以確保安全性
+
 **注意**：
 - Channel Access Token 和 Channel Secret 都可以在 LINE Developers Console 中找到
 - Channel Secret 用於驗證 Webhook 請求是否真的來自 LINE 平台
 - 如果未設定 Channel Secret，系統會跳過簽名驗證（僅用於開發測試）
 - **生產環境強烈建議設定 Channel Secret 以確保安全性**
+- **JWT Secret Key 必須在生產環境中設定，且應使用強隨機字串**
+- 預設管理員帳號密碼應在生產環境中修改
 
 ### 3. 設定 LINE Webhook
 
@@ -134,9 +175,125 @@ ngrok http 3000
 
 ## API 使用說明
 
-### 1. 發佈工作
+### 認證相關 API
+
+#### 1. 註冊新使用者
+
+**POST** `/api/auth/register`
+
+**請求範例：**
+```json
+{
+  "username": "testuser",
+  "password": "password123",
+  "email": "test@example.com",
+  "full_name": "測試使用者",
+  "is_admin": false
+}
+```
+
+**回應範例：**
+```json
+{
+  "id": "USER-002",
+  "username": "testuser",
+  "email": "test@example.com",
+  "full_name": "測試使用者",
+  "is_admin": false,
+  "is_active": true,
+  "created_at": "2026-01-10 12:00:00"
+}
+```
+
+#### 2. 使用者登入
+
+**POST** `/api/auth/login`
+
+**請求格式：** `application/x-www-form-urlencoded`
+
+**參數：**
+- `username`: 使用者名稱
+- `password`: 密碼
+
+**回應範例：**
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+**注意：** 將 `access_token` 用於後續 API 請求的 Authorization header：
+```
+Authorization: Bearer {access_token}
+```
+
+#### 3. 取得當前使用者資訊
+
+**GET** `/api/auth/me`
+
+**認證：** 需要 Bearer Token
+
+**回應：** 返回當前登入使用者的資訊
+
+### 地理編碼 API
+
+#### 4. 根據地址取得座標
+
+**POST** `/api/geocode`
+
+**認證：** 需要認證（Bearer Token）
+
+**請求範例：**
+```json
+{
+  "address": "台北市信義區信義路五段7號"
+}
+```
+
+**回應範例：**
+```json
+{
+  "address": "台北市信義區信義路五段7號",
+  "latitude": 25.0339639,
+  "longitude": 121.5644722,
+  "success": true,
+  "message": "成功取得座標"
+}
+```
+
+#### 5. 根據座標取得地址（反向地理編碼）
+
+**POST** `/api/geocode/reverse`
+
+**認證：** 需要認證（Bearer Token）
+
+**請求範例：**
+```json
+{
+  "latitude": 25.0339639,
+  "longitude": 121.5644722
+}
+```
+
+**回應範例：**
+```json
+{
+  "latitude": 25.0339639,
+  "longitude": 121.5644722,
+  "address": "台北市信義區信義路五段7號",
+  "success": true,
+  "message": "成功取得地址"
+}
+```
+
+### 工作管理 API
+
+#### 6. 發佈工作
 
 **POST** `/api/jobs`
+
+**認證：** 需要管理員權限（Bearer Token）
 
 **請求範例：**
 ```json
@@ -145,9 +302,16 @@ ngrok http 3000
   "location": "台北市信義區信義路五段7號",
   "date": "2026-01-10",
   "shifts": ["早班:08-19", "中班:14-23", "晚班:22-07"],
-  "location_image_url": "https://example.com/image.jpg"
+  "location_image_url": "https://example.com/image.jpg",
+  "latitude": null,
+  "longitude": null
 }
 ```
+
+**注意：**
+- `latitude` 和 `longitude` 為可選欄位
+- 如果未提供座標，系統會自動使用 Google Maps Geocoding API 從地址取得座標
+- 如果已提供座標，系統會直接使用提供的座標
 
 **回應範例：**
 ```json
@@ -157,28 +321,36 @@ ngrok http 3000
   "location": "台北市信義區信義路五段7號",
   "date": "2026-01-10",
   "shifts": ["早班:08-19", "中班:14-23", "晚班:22-07"],
-  "location_image_url": "https://example.com/image.jpg"
+  "location_image_url": "https://example.com/image.jpg",
+  "latitude": 25.0339639,
+  "longitude": 121.5644722
 }
 ```
 
-### 2. 取得所有工作
+#### 7. 取得所有工作
 
 **GET** `/api/jobs`
 
+**認證：** 需要認證（Bearer Token）
+
 **回應：** 返回所有工作列表
 
-### 3. 取得特定工作
+#### 8. 取得特定工作
 
 **GET** `/api/jobs/{job_id}`
+
+**認證：** 需要認證（Bearer Token）
 
 **參數：**
 - `job_id`: 工作ID（例如：JOB001）
 
-**回應：** 返回工作詳細資訊
+**回應：** 返回工作詳細資訊（包含座標）
 
-### 4. 取得工作報名清單
+#### 9. 取得工作報名清單
 
 **GET** `/api/jobs/{job_id}/applications`
+
+**認證：** 需要管理員權限（Bearer Token）
 
 **參數：**
 - `job_id`: 工作ID（例如：JOB001）
@@ -197,11 +369,69 @@ ngrok http 3000
 ]
 ```
 
-### 5. 取得所有報名記錄
+#### 10. 取得所有報名記錄
 
 **GET** `/api/applications`
 
+**認證：** 需要管理員權限（Bearer Token）
+
 **回應：** 返回系統中所有報名記錄
+
+### 使用者管理 API（管理員專用）
+
+#### 11. 取得所有使用者列表
+
+**GET** `/api/users`
+
+**認證：** 需要管理員權限（Bearer Token）
+
+**回應：** 返回所有使用者列表
+
+#### 12. 取得特定使用者資訊
+
+**GET** `/api/users/{username}`
+
+**認證：** 需要管理員權限（Bearer Token）
+
+**參數：**
+- `username`: 使用者名稱
+
+**回應：** 返回使用者詳細資訊
+
+## 認證與權限說明
+
+### 預設管理員帳號
+
+系統啟動時會自動建立預設管理員帳號：
+- **使用者名稱：** `admin`（可透過環境變數 `ADMIN_USERNAME` 修改）
+- **密碼：** `admin123`（可透過環境變數 `ADMIN_PASSWORD` 修改）
+
+**⚠️ 重要：** 生產環境請務必修改預設密碼！
+
+### 環境變數設定
+
+```bash
+# JWT 密鑰（生產環境必須設定）
+export JWT_SECRET_KEY="your-secret-key-here"
+
+# 預設管理員帳號（可選）
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="admin123"
+```
+
+### 權限說明
+
+- **一般使用者：** 可以查看工作列表和工作詳情
+- **管理員：** 可以建立工作、查看所有報名記錄、管理使用者
+
+### Token 使用方式
+
+1. 使用 `/api/auth/login` 端點登入取得 Token
+2. 在後續 API 請求的 Header 中加入：
+   ```
+   Authorization: Bearer {access_token}
+   ```
+3. Token 有效期為 30 天
 
 ## LINE Bot 使用說明
 
@@ -242,6 +472,8 @@ ngrok http 3000
 - `date`: 工作日期（格式：YYYY-MM-DD）
 - `shifts`: 班別列表（例如：["早班:08-19", "中班:14-23"]）
 - `location_image_url`: 工作地點圖片 URL（可選，必須是 HTTPS）
+- `latitude`: 緯度（可選，自動從地址取得）
+- `longitude`: 經度（可選，自動從地址取得）
 
 ### Application（報名記錄）
 - `id`: 報名ID（自動產生，格式：工作編號-日期-流水號，例如：JOB001-20260110-001）
@@ -297,14 +529,16 @@ ngrok http 3000
 ## 開發建議
 
 ### 擴充功能
+- [x] 加入使用者認證和權限管理
+- [x] 加入 Google Maps 座標取得功能
 - [ ] 加入資料庫持久化（PostgreSQL、MongoDB 等）
-- [ ] 加入使用者認證和權限管理
 - [ ] 加入報名通知功能（Email、簡訊等）
 - [ ] 加入工作管理後台介面（Web UI）
 - [ ] 加入報名統計和分析功能
 - [ ] 加入報名名額限制
 - [ ] 加入報名截止時間
 - [ ] 加入工作分類和搜尋功能
+- [ ] 在地圖上顯示工作地點
 
 ### 改進建議
 - [ ] 使用依賴注入管理服務（如 FastAPI Depends）
