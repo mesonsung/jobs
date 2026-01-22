@@ -19,7 +19,13 @@ from flask import Flask, request
 import json
 import datetime
 import urllib.parse
-import uuid
+import uvicorn
+import threading
+import socket
+import os
+import hmac
+import hashlib
+import base64
 
 # ==================== 資料模型 ====================
 
@@ -948,12 +954,13 @@ def get_all_applications():
 class PartTimeJobBot:
     """兼職工作報名系統主應用程式"""
     
-    def __init__(self, channel_access_token: str):
+    def __init__(self, channel_access_token: str, channel_secret: Optional[str] = None):
         # 初始化服務
         self.job_service = job_service
         self.application_service = application_service
         self.message_service = LineMessageService(channel_access_token)
         self.handler = JobHandler(self.job_service, self.application_service, self.message_service)
+        self.channel_secret = channel_secret
         
         # 建立 Flask 應用程式（用於 LINE Webhook）
         self.flask_app = Flask(__name__)
@@ -965,9 +972,52 @@ class PartTimeJobBot:
         def webhook():
             return self.handle_webhook()
     
+    def _verify_signature(self, body: bytes, signature: str) -> bool:
+        """
+        驗證 LINE Webhook 請求簽名
+        
+        參數:
+            body: 請求原始 body（bytes）
+            signature: X-Line-Signature header 的值
+        
+        返回:
+            bool: 驗證是否通過
+        """
+        if not self.channel_secret:
+            # 如果沒有設定 channel_secret，跳過驗證（開發模式）
+            print("⚠️  警告：未設定 Channel Secret，跳過簽名驗證")
+            return True
+        
+        try:
+            # 使用 Channel Secret 和請求體計算 HMAC-SHA256
+            hash_value = hmac.new(
+                self.channel_secret.encode('utf-8'),
+                body,
+                hashlib.sha256
+            ).digest()
+            
+            # 轉換為 base64
+            expected_signature = base64.b64encode(hash_value).decode('utf-8')
+            
+            # 比較簽名（使用安全比較避免時間攻擊）
+            return hmac.compare_digest(expected_signature, signature)
+        except Exception as e:
+            print(f"❌ 簽名驗證錯誤：{e}")
+            return False
+    
     def handle_webhook(self):
         """處理 LINE Webhook"""
         try:
+            # 驗證請求簽名
+            signature = request.headers.get('X-Line-Signature', '')
+            body = request.get_data()
+            
+            if not self._verify_signature(body, signature):
+                print(f"❌ Webhook 簽名驗證失敗")
+                print(f"   收到的簽名：{signature[:20]}...")
+                return 'Forbidden', 403
+            
+            # 解析 JSON 資料
             data = request.get_json()
             
             # 印出接收到的資料（方便除錯）
@@ -1127,31 +1177,53 @@ def create_sample_jobs(job_service: JobService):
 # ==================== 主程式 ====================
 
 CHANNEL_ACCESS_TOKEN = "oZPbAQXckPCTbRPN67GNPlyG/MqToO3haMOIvWOI35PGg8ZdBYEVtOc1KdJ+zYLJjOJ8+/YGaEk4f7m6W1RavpsYIp+5k1taVZ47HYboydFvMbTQ4rxXlNGysl2q0sM79gbzVuGnzHkPL2mf9SfU1gdB04t89/1O/w1cDnyilFU="
+# Channel Secret 用於驗證 Webhook 請求來源（從 LINE Developers Console 取得）
+# 如果未設定，系統會跳過簽名驗證（僅用於開發測試）
+LINE_CHANNEL_SECRET = "793a80c83472d9ddf0451cad2dd4077c"
+CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET", LINE_CHANNEL_SECRET)
 
-# 建立測試資料
+# 建立測試資料（在模組層級建立，每個進程都會執行，但有檢查機制避免重複）
 create_sample_jobs(job_service)
 
-# 建立 Bot 實例
-bot = PartTimeJobBot(CHANNEL_ACCESS_TOKEN)
+# 建立 Bot 實例（在模組層級建立，每個進程都需要自己的實例）
+bot = PartTimeJobBot(CHANNEL_ACCESS_TOKEN, channel_secret=CHANNEL_SECRET)
 
 # 如果直接執行此檔案，啟動伺服器
 if __name__ == "__main__":
-    import uvicorn
-    import threading
     
-    # 啟動 FastAPI（後台 API）
+    # 檢查 port 是否已被佔用
+    def is_port_in_use(port: int, host: str = "0.0.0.0") -> bool:
+        """檢查指定 port 是否已被使用"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, port))
+                return False
+            except OSError:
+                return True
+    
+    # 檢查是否在主進程中（Flask reloader 會產生子進程）
+    # WERKZEUG_RUN_MAIN 在 reloader 子進程中會被設為 'true'
+    is_main_process = os.environ.get('WERKZEUG_RUN_MAIN') != 'true'
+    
+    # 啟動 FastAPI（後台 API）- 只在主進程且 port 未被佔用時啟動
     def run_fastapi():
-        uvicorn.run(api_app, host="0.0.0.0", port=8000)
+        try:
+            uvicorn.run(api_app, host="0.0.0.0", port=8880)
+        except Exception as e:
+            print(f"⚠️  FastAPI 啟動失敗：{e}")
     
     # 啟動 LINE Bot（前台）
     def run_line_bot():
         bot.run(port=3000, debug=True, use_threading=False)
     
-    # 在背景執行 FastAPI
-    fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
-    fastapi_thread.start()
-    print("✅ FastAPI 伺服器已啟動，監聽 http://0.0.0.0:8000")
-    print("   API 文件：http://localhost:8000/docs")
+    # 只在主進程且 port 未被佔用時啟動 FastAPI
+    if is_main_process and not is_port_in_use(8880):
+        fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
+        fastapi_thread.start()
+        print("✅ FastAPI 伺服器已啟動，監聽 http://0.0.0.0:8880")
+        print("   API 文件：http://localhost:8880/docs")
+    elif is_port_in_use(8880) and is_main_process:
+        print("ℹ️  FastAPI 伺服器已在運行（port 8880 已被佔用）")
     
     # 在前景執行 LINE Bot
     print("✅ 啟動 LINE Bot 伺服器...")
