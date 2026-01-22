@@ -165,8 +165,8 @@ class ApplicationService:
         返回:
             Application: 報名記錄
         """
-        # 報名編號格式：工作編號_日期_流水號
-        # 例如：JOB001_20260110_001
+        # 報名編號格式：工作編號-日期-流水號
+        # 例如：JOB001-20260110-001
         
         # 取得當前日期（YYYYMMDD格式）
         today = datetime.datetime.now().strftime('%Y%m%d')
@@ -185,8 +185,8 @@ class ApplicationService:
         sequence_number = len(same_day_applications) + 1
         sequence_str = f"{sequence_number:03d}"
         
-        # 組合報名編號：工作編號_日期_流水號
-        application_id = f"{job_id}_{today}_{sequence_str}"
+        # 組合報名編號：工作編號-日期-流水號
+        application_id = f"{job_id}-{today}-{sequence_str}"
         
         application = Application(
             id=application_id,
@@ -813,14 +813,14 @@ class JobHandler:
             if len(job.location) > 12:
                 location_display += "..."
             
-            # 簡化報名編號（顯示日期+流水號，例如：20260110_001）
-            # 報名編號格式：工作編號_日期_流水號
-            # 提取最後部分（日期_流水號）
-            if '_' in app.id:
-                parts = app.id.split('_')
+            # 簡化報名編號（顯示日期+流水號，例如：20260110-001）
+            # 報名編號格式：工作編號-日期-流水號
+            # 提取最後部分（日期-流水號）
+            if '-' in app.id:
+                parts = app.id.split('-')
                 if len(parts) >= 2:
                     # 取最後兩部分：日期和流水號
-                    app_id_display = f"{parts[-2]}_{parts[-1]}"
+                    app_id_display = f"{parts[-2]}-{parts[-1]}"
                 else:
                     app_id_display = app.id[-12:] if len(app.id) > 12 else app.id
             else:
