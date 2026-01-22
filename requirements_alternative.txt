@@ -1,6 +1,0 @@
-# 備選方案：使用不需要 Rust 編譯的版本
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==1.10.13
-requests==2.31.0
-flask==3.0.0
