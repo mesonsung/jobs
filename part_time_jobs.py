@@ -421,6 +421,10 @@ class JobHandler:
             if is_applied and applied_shift:
                 status_text += f" ({applied_shift})"
             
+            # 建立 Google Maps 導航 URL
+            encoded_location = urllib.parse.quote(job.location)
+            navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
+            
             # 建立按鈕動作
             actions = [
                 {
@@ -445,6 +449,13 @@ class JobHandler:
                     "label": "報名",
                     "data": f"action=job&step=apply&job_id={job.id}"
                 })
+            
+            # 加入導航按鈕
+            actions.append({
+                "type": "uri",
+                "label": "導航",
+                "uri": navigation_url
+            })
             
             # 建立按鈕範本文字（確保不超過 60 字元，包括換行符）
             # 簡化地點顯示（如果太長）
@@ -542,6 +553,10 @@ class JobHandler:
         if is_applied:
             job_detail += f"\n✅ 您已報名：{application.shift}"
         
+        # 建立 Google Maps 導航 URL
+        encoded_location = urllib.parse.quote(job.location)
+        navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
+        
         # 建立按鈕
         actions = []
         if is_applied:
@@ -556,6 +571,13 @@ class JobHandler:
                 "label": "報名",
                 "data": f"action=job&step=apply&job_id={job_id}"
             })
+        
+        # 加入導航按鈕
+        actions.append({
+            "type": "uri",
+            "label": "導航",
+            "uri": navigation_url
+        })
         
         actions.append({
             "type": "postback",
@@ -819,6 +841,10 @@ class JobHandler:
                 if len(test_text) <= 60:
                     app_text = test_text
             
+            # 建立 Google Maps 導航 URL
+            encoded_location = urllib.parse.quote(job.location)
+            navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
+            
             # 建立按鈕動作
             actions = [
                 {
@@ -830,6 +856,11 @@ class JobHandler:
                     "type": "postback",
                     "label": "取消報名",
                     "data": f"action=job&step=cancel&job_id={job.id}"
+                },
+                {
+                    "type": "uri",
+                    "label": "導航",
+                    "uri": navigation_url
                 }
             ]
             
