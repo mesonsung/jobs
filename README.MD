@@ -143,9 +143,109 @@ export ADMIN_PASSWORD="admin123"
 
 **注意**：Webhook 路徑為根路徑 `/`，不是 `/webhook`
 
+## Docker 部署
+
+### 使用 Docker Compose（推薦）
+
+1. **複製環境變數範例檔案：**
+```bash
+cp .env.example .env
+```
+
+2. **編輯 `.env` 檔案，填入您的設定：**
+```bash
+# LINE Bot 設定
+LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token_here
+LINE_CHANNEL_SECRET=your_line_channel_secret_here
+
+# JWT 設定（生產環境必須修改）
+JWT_SECRET_KEY=your-secret-key-change-this-in-production
+
+# Google Maps API Key
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+
+# 管理員帳號設定（可選）
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123
+```
+
+**注意：** `docker-compose.yml` 已配置為自動從 `.env` 檔案讀取環境變數（透過 `env_file: - .env`），您只需要編輯 `.env` 檔案即可。
+
+3. **啟動服務：**
+```bash
+docker-compose up -d
+```
+
+4. **查看日誌：**
+```bash
+docker-compose logs -f
+```
+
+5. **停止服務：**
+```bash
+docker-compose down
+```
+
+### 使用 Docker 直接運行
+
+1. **建立映像：**
+```bash
+docker build -t good-job-bot .
+```
+
+2. **運行容器：**
+```bash
+docker run -d \
+  --name good-job-bot \
+  -p 3000:3000 \
+  -p 8880:8880 \
+  -e LINE_CHANNEL_ACCESS_TOKEN="your_token_here" \
+  -e LINE_CHANNEL_SECRET="your_secret_here" \
+  -e JWT_SECRET_KEY="your-secret-key-here" \
+  -e GOOGLE_MAPS_API_KEY="your_api_key_here" \
+  --restart unless-stopped \
+  good-job-bot
+```
+
+3. **查看日誌：**
+```bash
+docker logs -f good-job-bot
+```
+
+4. **停止容器：**
+```bash
+docker stop good-job-bot
+docker rm good-job-bot
+```
+
+### Docker 部署注意事項
+
+- **端口映射：**
+  - `3000:3000` - LINE Bot (Flask Webhook)
+  - `8880:8880` - FastAPI API 文件
+  
+- **環境變數：**
+  - 所有敏感資訊應透過環境變數傳入
+  - 生產環境請使用 `.env` 檔案或 Docker secrets
+  - 必須設定的環境變數：`LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`
+
+- **資料持久化：**
+  - 目前資料儲存在記憶體中，容器重啟後會遺失
+  - 如需持久化，建議使用資料庫（PostgreSQL、MySQL 等）
+  - 可在 `docker-compose.yml` 中取消註解 volume 掛載來持久化資料
+
+- **健康檢查：**
+  - Docker Compose 已包含健康檢查設定
+  - 檢查 FastAPI 文件頁面是否可訪問
+  - 使用 Python 內建的 `urllib` 進行檢查（無需額外依賴）
+
+- **開發模式：**
+  - 如需即時反映程式碼變更，可在 `docker-compose.yml` 中取消註解 volume 掛載
+  - 生產環境建議移除 volume 掛載，使用映像內的程式碼
+
 ## 執行系統
 
-### 啟動伺服器
+### 啟動伺服器（本地開發）
 
 ```bash
 python3 part_time_jobs.py
