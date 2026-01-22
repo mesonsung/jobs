@@ -24,7 +24,7 @@ services:
 
   good-job-bot:
     container_name: good-job-bot
-    image: good-job-bot:latest
+    image: good-job-bot:new-version
     build: .
     restart: unless-stopped
     depends_on:
@@ -32,6 +32,12 @@ services:
         condition: service_healthy
     env_file:
       - .env.example
+    environment:
+      # 使用 Gunicorn 作為 WSGI 伺服器
+      - USE_GUNICORN=true
+      - DEBUG=false
+      - GUNICORN_WORKERS=2
+      - LOG_LEVEL=info
     ports:
       - "3000:3000"  # LINE Bot (Flask)
       - "8880:8880"  # FastAPI

@@ -3,6 +3,7 @@ uvicorn[standard]>=0.30.0
 pydantic[email]>=2.9.0
 requests>=2.32.0
 flask>=3.1.0
+gunicorn>=21.2.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=3.2.0,<4.0.0

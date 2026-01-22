@@ -46,7 +46,9 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # 複製應用程式檔案
+COPY app/ ./app/
 COPY part_time_jobs.py .
+COPY main.py .
 
 # 設定檔案所有權
 RUN chown -R appuser:appuser /app /home/appuser/.local
@@ -60,4 +62,12 @@ EXPOSE 3000 8880
 USER appuser
 
 # 啟動應用程式
-CMD ["python", "part_time_jobs.py"]
+# 使用新的模組化結構
+# 在生產環境中，設置環境變數以使用 Gunicorn
+ENV DEBUG=false
+ENV USE_GUNICORN=true
+ENV GUNICORN_WORKERS=2
+ENV LOG_LEVEL=info
+
+# 使用 Gunicorn 啟動（通過 Python 模組）
+CMD ["python", "-m", "app.main"]

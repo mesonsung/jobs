@@ -1,10 +1,10 @@
 """
-Good Jobs 報名系統
+Good Jobs 報班系統
 
 使用 FastAPI 作為後台 API，LINE Bot 作為前台介面
 包含：
 1. JobService - 工作管理服務
-2. ApplicationService - 報名管理服務
+2. ApplicationService - 報班管理服務
 3. LineMessageService - LINE 訊息發送服務
 4. JobHandler - 工作事件處理器
 5. FastAPI 路由 - 後台管理 API
@@ -81,7 +81,7 @@ class JobModel(Base):
     applications = relationship("ApplicationModel", back_populates="job", cascade="all, delete-orphan")
 
 class ApplicationModel(Base):
-    """報名記錄資料表模型"""
+    """報班記錄資料表模型"""
     __tablename__ = "applications"
     
     id = Column(String, primary_key=True, index=True)
@@ -136,13 +136,13 @@ class Job(BaseModel):
     longitude: Optional[float] = None  # 經度
 
 class Application(BaseModel):
-    """報名記錄模型"""
+    """報班記錄模型"""
     id: str
     job_id: str
     user_id: str
     user_name: Optional[str] = None
     shift: str  # 選擇的班別
-    applied_at: str  # 報名時間
+    applied_at: str  # 報班時間
 
 class CreateJobRequest(BaseModel):
     """建立工作請求"""
@@ -368,7 +368,7 @@ class JobService:
                 db.close()
     
     def get_available_jobs(self, db: Optional[Session] = None) -> List[Job]:
-        """取得可報名的工作（日期大於等於今天）"""
+        """取得可報班的工作（日期大於等於今天）"""
         if db is None:
             db = self._get_db()
             should_close = True
@@ -396,14 +396,14 @@ class JobService:
             if should_close:
                 db.close()
 
-# ==================== 模組 2: 報名服務 (ApplicationService) ====================
+# ==================== 模組 2: 報班服務 (ApplicationService) ====================
 
 class ApplicationService:
-    """報名管理服務"""
+    """報班管理服務"""
     
     def __init__(self, db: Optional[Session] = None):
         """
-        初始化報名服務
+        初始化報班服務
         
         參數:
             db: 資料庫會話（可選，如果提供則使用，否則創建新會話）
@@ -418,7 +418,7 @@ class ApplicationService:
     
     def create_application(self, job_id: str, user_id: str, shift: str, user_name: Optional[str] = None, db: Optional[Session] = None) -> Application:
         """
-        建立報名記錄
+        建立報班記錄
         
         參數:
             job_id: 工作ID
@@ -428,7 +428,7 @@ class ApplicationService:
             db: 資料庫會話（可選）
         
         返回:
-            Application: 報名記錄
+            Application: 報班記錄
         """
         if db is None:
             db = self._get_db()
@@ -437,7 +437,7 @@ class ApplicationService:
             should_close = False
         
         try:
-            # 報名編號格式：工作編號-日期-流水號
+            # 報班編號格式：工作編號-日期-流水號
             # 例如：JOB001-20260110-001
             
             # 取得當前日期（YYYYMMDD格式）
@@ -445,17 +445,17 @@ class ApplicationService:
             today_date = datetime.datetime.now().date()
             
             # 計算該工作在同一天的流水號
-            # 從資料庫查詢該工作在同一天的所有報名記錄
+            # 從資料庫查詢該工作在同一天的所有報班記錄
             same_day_count = db.query(ApplicationModel).filter(
                 ApplicationModel.job_id == job_id,
                 func.date(ApplicationModel.applied_at) == today_date
             ).count()
             
-            # 流水號 = 當天報名數量 + 1（3位數，補零）
+            # 流水號 = 當天報班數量 + 1（3位數，補零）
             sequence_number = same_day_count + 1
             sequence_str = f"{sequence_number:03d}"
             
-            # 組合報名編號：工作編號-日期-流水號
+            # 組合報班編號：工作編號-日期-流水號
             application_id = f"{job_id}-{today}-{sequence_str}"
             
             applied_at = datetime.datetime.now()
@@ -493,7 +493,7 @@ class ApplicationService:
                 db.close()
     
     def get_user_application_for_job(self, user_id: str, job_id: str, db: Optional[Session] = None) -> Optional[Application]:
-        """取得使用者對特定工作的報名記錄"""
+        """取得使用者對特定工作的報班記錄"""
         if db is None:
             db = self._get_db()
             should_close = True
@@ -523,7 +523,7 @@ class ApplicationService:
     
     def cancel_application(self, user_id: str, job_id: str, db: Optional[Session] = None) -> Tuple[bool, Optional[Application]]:
         """
-        取消報名
+        取消報班
         
         參數:
             user_id: 使用者ID
@@ -531,7 +531,7 @@ class ApplicationService:
             db: 資料庫會話（可選）
         
         返回:
-            tuple: (是否成功, 取消的報名記錄)
+            tuple: (是否成功, 取消的報班記錄)
         """
         if db is None:
             db = self._get_db()
@@ -571,7 +571,7 @@ class ApplicationService:
                 db.close()
     
     def get_job_applications(self, job_id: str, db: Optional[Session] = None) -> List[Application]:
-        """取得工作的所有報名記錄"""
+        """取得工作的所有報班記錄"""
         if db is None:
             db = self._get_db()
             should_close = True
@@ -600,14 +600,14 @@ class ApplicationService:
     
     def get_user_applications(self, user_id: str, db: Optional[Session] = None) -> List[Application]:
         """
-        取得使用者的所有報名記錄
+        取得使用者的所有報班記錄
         
         參數:
             user_id: 使用者ID
             db: 資料庫會話（可選）
         
         返回:
-            list: 報名記錄列表
+            list: 報班記錄列表
         """
         if db is None:
             db = self._get_db()
@@ -1297,15 +1297,15 @@ class JobHandler:
         self.edit_profile_states: Dict[str, Dict] = {}
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
-        """顯示可報名的工作列表"""
+        """顯示可報班的工作列表"""
         jobs = self.job_service.get_available_jobs()
         
-        print(f"📋 查詢可報名工作：找到 {len(jobs)} 個工作")
+        print(f"📋 查詢可報班工作：找到 {len(jobs)} 個工作")
         
         if not jobs:
             self.message_service.send_text(
                 reply_token,
-                "目前沒有可報名的工作。\n\n請稍後再試，或聯絡管理員。\n\n💡 提示：管理員可以透過 API 發佈新工作。"
+                "目前沒有可報班的工作。\n\n請稍後再試，或聯絡管理員。\n\n💡 提示：管理員可以透過 API 發佈新工作。"
             )
             return
         
@@ -1313,12 +1313,12 @@ class JobHandler:
         messages = []
         messages.append({
             "type": "text",
-            "text": f"📋 可報名的工作（共 {len(jobs)} 個）："
+            "text": f"📋 可報班的工作（共 {len(jobs)} 個）："
         })
         
         # 每個工作建立一個 Flex 訊息或按鈕訊息
         for job in jobs:
-            # 檢查使用者是否已報名
+            # 檢查使用者是否已報班
             is_applied = False
             applied_shift = None
             if user_id:
@@ -1328,7 +1328,7 @@ class JobHandler:
                     applied_shift = application.shift
             
             # 建立狀態標示
-            status_icon = "✅ 已報名" if is_applied else "⭕ 未報名"
+            status_icon = "✅ 已報班" if is_applied else "⭕ 未報班"
             status_text = f"\n{status_icon}"
             if is_applied and applied_shift:
                 status_text += f" ({applied_shift})"
@@ -1358,19 +1358,19 @@ class JobHandler:
                     "label": "📝 註冊",
                     "data": "action=register&step=register"
                 })
-            # 根據報名狀態加入不同按鈕
+            # 根據報班狀態加入不同按鈕
             elif is_applied:
-                # 已報名：加入取消報名按鈕
+                # 已報班：加入取消報班按鈕
                 actions.append({
                     "type": "postback",
-                    "label": "取消報名",
+                    "label": "取消報班",
                     "data": f"action=job&step=cancel&job_id={job.id}"
                 })
             else:
-                # 未報名：加入報名按鈕
+                # 未報班：加入報班按鈕
                 actions.append({
                     "type": "postback",
-                    "label": "報名",
+                    "label": "報班",
                     "data": f"action=job&step=apply&job_id={job.id}"
                 })
             
@@ -1402,11 +1402,11 @@ class JobHandler:
             
             # 嘗試加入狀態文字
             if is_applied:
-                status_display = "\n✅已報名"
+                status_display = "\n✅已報班"
                 if applied_shift and len(applied_shift) <= 10:
                     status_display += f"({applied_shift[:8]})"
             else:
-                status_display = "\n⭕未報名"
+                status_display = "\n⭕未報班"
             
             # 檢查總長度（換行符算 1 個字元）
             test_text = base_text + status_display
@@ -1465,7 +1465,7 @@ class JobHandler:
         if self.auth_service:
             is_registered = self.auth_service.is_line_user_registered(user_id)
         
-        # 檢查使用者是否已報名
+        # 檢查使用者是否已報班
         application = None
         is_applied = False
         if is_registered:
@@ -1483,7 +1483,7 @@ class JobHandler:
             job_detail += f"   • {shift}\n"
         
         if is_applied and application:
-            job_detail += f"\n✅ 您已報名：{application.shift}"
+            job_detail += f"\n✅ 您已報班：{application.shift}"
         
         # 建立 Google Maps 導航 URL
         encoded_location = urllib.parse.quote(job.location)
@@ -1501,13 +1501,13 @@ class JobHandler:
         elif is_applied:
             actions.append({
                 "type": "postback",
-                "label": "取消報名",
+                "label": "取消報班",
                 "data": f"action=job&step=cancel&job_id={job_id}"
             })
         else:
             actions.append({
                 "type": "postback",
-                "label": "報名",
+                "label": "報班",
                 "data": f"action=job&step=apply&job_id={job_id}"
             })
         
@@ -1553,12 +1553,12 @@ class JobHandler:
         self.message_service.send_multiple_messages(reply_token, messages)
     
     def handle_apply_job(self, reply_token: str, user_id: str, job_id: str) -> None:
-        """處理報名工作流程 - 顯示班別選擇"""
+        """處理報班工作流程 - 顯示班別選擇"""
         # 檢查使用者是否已註冊
         if self.auth_service and not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無法報名工作。\n\n請先使用「註冊」功能完成註冊。"
+                "❌ 您尚未註冊，無法報班工作。\n\n請先使用「註冊」功能完成註冊。"
             )
             return
         
@@ -1567,12 +1567,12 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
             return
         
-        # 檢查是否已報名
+        # 檢查是否已報班
         existing_app = self.application_service.get_user_application_for_job(user_id, job_id)
         if existing_app:
             self.message_service.send_text(
                 reply_token,
-                f"❌ 您已經報名了這個工作（班別：{existing_app.shift}）\n\n如需取消，請先取消現有報名。"
+                f"❌ 您已經報班了這個工作（班別：{existing_app.shift}）\n\n如需取消，請先取消現有報班。"
             )
             return
         
@@ -1588,7 +1588,7 @@ class JobHandler:
         messages = [
             {
                 "type": "text",
-                "text": f"請選擇要報名的班別：\n\n工作：{job.name}\n日期：{job.date}"
+                "text": f"請選擇要報班的班別：\n\n工作：{job.name}\n日期：{job.date}"
             },
             {
                 "type": "template",
@@ -1596,7 +1596,7 @@ class JobHandler:
                 "template": {
                     "type": "buttons",
                     "title": "選擇班別",
-                    "text": "請選擇您要報名的班別：",
+                    "text": "請選擇您要報班的班別：",
                     "actions": shift_actions
                 }
             }
@@ -1605,12 +1605,12 @@ class JobHandler:
         self.message_service.send_multiple_messages(reply_token, messages)
     
     def handle_select_shift(self, reply_token: str, user_id: str, job_id: str, shift: str) -> None:
-        """處理選擇班別並完成報名"""
+        """處理選擇班別並完成報班"""
         # 檢查使用者是否已註冊
         if self.auth_service and not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無法報名工作。\n\n請先使用「註冊」功能完成註冊。"
+                "❌ 您尚未註冊，無法報班工作。\n\n請先使用「註冊」功能完成註冊。"
             )
             return
         
@@ -1624,35 +1624,35 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 無效的班別選擇。")
             return
         
-        # 檢查是否已報名
+        # 檢查是否已報班
         existing_app = self.application_service.get_user_application_for_job(user_id, job_id)
         if existing_app:
             self.message_service.send_text(
                 reply_token,
-                f"❌ 您已經報名了這個工作（班別：{existing_app.shift}）"
+                f"❌ 您已經報班了這個工作（班別：{existing_app.shift}）"
             )
             return
         
-        # 建立報名記錄
+        # 建立報班記錄
         application = self.application_service.create_application(job_id, user_id, shift)
         
-        # 發送報名成功訊息
-        success_message = f"""✅ 報名成功！
+        # 發送報班成功訊息
+        success_message = f"""✅ 報班成功！
 
-📋 報名資訊：
+📋 報班資訊：
 • 工作名稱：{job.name}
 • 工作地點：{job.location}
 • 工作日期：{job.date}
-• 報名班別：{shift}
-• 報名時間：{application.applied_at}
-• 報名編號：{application.id}
+• 報班班別：{shift}
+• 報班時間：{application.applied_at}
+• 報班編號：{application.id}
 
-感謝您的報名，我們會盡快與您聯繫！"""
+感謝您的報班，我們會盡快與您聯繫！"""
         
         self.message_service.send_text(reply_token, success_message)
     
     def handle_cancel_application(self, reply_token: str, user_id: str, job_id: str) -> None:
-        """處理取消報名流程 - 顯示報名資訊和確認按鈕"""
+        """處理取消報班流程 - 顯示報班資訊和確認按鈕"""
         job = self.job_service.get_job(job_id)
         if not job:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
@@ -1660,19 +1660,19 @@ class JobHandler:
         
         application = self.application_service.get_user_application_for_job(user_id, job_id)
         if not application:
-            self.message_service.send_text(reply_token, "❌ 您尚未報名這個工作。")
+            self.message_service.send_text(reply_token, "❌ 您尚未報班這個工作。")
             return
         
-        # 顯示報名資訊和確認按鈕
-        cancel_text = f"""請確認要取消的報名：
+        # 顯示報班資訊和確認按鈕
+        cancel_text = f"""請確認要取消的報班：
 
-📋 報名資訊：
+📋 報班資訊：
 • 工作名稱：{job.name}
 • 工作地點：{job.location}
 • 工作日期：{job.date}
-• 報名班別：{application.shift}
-• 報名時間：{application.applied_at}
-• 報名編號：{application.id}"""
+• 報班班別：{application.shift}
+• 報班時間：{application.applied_at}
+• 報班編號：{application.id}"""
         
         actions = [
             {
@@ -1694,11 +1694,11 @@ class JobHandler:
             },
             {
                 "type": "template",
-                "altText": "確認取消報名",
+                "altText": "確認取消報班",
                 "template": {
                     "type": "buttons",
-                    "title": "確認取消報名",
-                    "text": "確定要取消這個報名嗎？",
+                    "title": "確認取消報班",
+                    "text": "確定要取消這個報班嗎？",
                     "actions": actions
                 }
             }
@@ -1707,7 +1707,7 @@ class JobHandler:
         self.message_service.send_multiple_messages(reply_token, messages)
     
     def handle_confirm_cancel(self, reply_token: str, user_id: str, job_id: str) -> None:
-        """處理確認取消報名"""
+        """處理確認取消報班"""
         job = self.job_service.get_job(job_id)
         if not job:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
@@ -1716,60 +1716,60 @@ class JobHandler:
         success, canceled_app = self.application_service.cancel_application(user_id, job_id)
         
         if success and canceled_app:
-            cancel_message = f"""✅ 報名已成功取消！
+            cancel_message = f"""✅ 報班已成功取消！
 
-📋 已取消的報名資訊：
+📋 已取消的報班資訊：
 • 工作名稱：{job.name}
 • 工作地點：{job.location}
 • 工作日期：{job.date}
-• 原報名班別：{canceled_app.shift}
-• 報名編號：{canceled_app.id}
+• 原報班班別：{canceled_app.shift}
+• 報班編號：{canceled_app.id}
 
 如有任何問題，歡迎隨時聯絡我們。"""
             self.message_service.send_text(reply_token, cancel_message)
         else:
-            self.message_service.send_text(reply_token, "❌ 取消報名失敗，請稍後再試。")
+            self.message_service.send_text(reply_token, "❌ 取消報班失敗，請稍後再試。")
     
     def show_user_applications(self, reply_token: str, user_id: str) -> None:
-        """顯示使用者已報名的工作列表"""
+        """顯示使用者已報班的工作列表"""
         applications = self.application_service.get_user_applications(user_id)
         
         if not applications:
             self.message_service.send_text(
                 reply_token,
-                "📋 您目前沒有任何報名記錄。\n\n請使用「查看工作列表」來尋找並報名工作。"
+                "📋 您目前沒有任何報班記錄。\n\n請使用「查看工作列表」來尋找並報班工作。"
             )
             return
         
-        # 建立報名列表訊息
+        # 建立報班列表訊息
         messages = []
         messages.append({
             "type": "text",
-            "text": f"📋 您的報名記錄（共 {len(applications)} 筆）："
+            "text": f"📋 您的報班記錄（共 {len(applications)} 筆）："
         })
         
-        # 每個報名建立一個訊息卡片
+        # 每個報班建立一個訊息卡片
         for i, app in enumerate(applications, 1):
             job = self.job_service.get_job(app.job_id)
             
             if not job:
-                # 如果工作不存在，只顯示報名資訊
-                app_text = f"{i}. 報名編號：{app.id}\n   班別：{app.shift}\n   報名時間：{app.applied_at}\n   ⚠️ 工作已不存在"
+                # 如果工作不存在，只顯示報班資訊
+                app_text = f"{i}. 報班編號：{app.id}\n   班別：{app.shift}\n   報班時間：{app.applied_at}\n   ⚠️ 工作已不存在"
                 messages.append({
                     "type": "text",
                     "text": app_text
                 })
                 continue
             
-            # 建立報名資訊文字（確保不超過 60 字元）
+            # 建立報班資訊文字（確保不超過 60 字元）
             # 簡化工作名稱和地點
             job_name_display = job.name[:15] if len(job.name) > 15 else job.name
             location_display = job.location[:12] if len(job.location) > 12 else job.location
             if len(job.location) > 12:
                 location_display += "..."
             
-            # 簡化報名編號（顯示日期+流水號，例如：20260110-001）
-            # 報名編號格式：工作編號-日期-流水號
+            # 簡化報班編號（顯示日期+流水號，例如：20260110-001）
+            # 報班編號格式：工作編號-日期-流水號
             # 提取最後部分（日期-流水號）
             if '-' in app.id:
                 parts = app.id.split('-')
@@ -1781,17 +1781,17 @@ class JobHandler:
             else:
                 app_id_display = app.id[-12:] if len(app.id) > 12 else app.id
             
-            # 簡化報名時間（只顯示日期）
+            # 簡化報班時間（只顯示日期）
             applied_date = app.applied_at.split()[0] if " " in app.applied_at else app.applied_at
             
             # 建立文字，逐步檢查長度
             app_text = f"📌{job_name_display}\n📍{location_display}\n📅{job.date}\n⏰{app.shift}"
             
-            # 如果還有空間，加入報名編號
+            # 如果還有空間，加入報班編號
             test_text = app_text + f"\n🆔{app_id_display}"
             if len(test_text) <= 60:
                 app_text = test_text
-                # 如果還有更多空間，加入報名時間
+                # 如果還有更多空間，加入報班時間
                 test_text = app_text + f"\n📝{applied_date}"
                 if len(test_text) <= 60:
                     app_text = test_text
@@ -1818,7 +1818,7 @@ class JobHandler:
                 actions.extend([
                     {
                         "type": "postback",
-                        "label": "取消報名",
+                        "label": "取消報班",
                         "data": f"action=job&step=cancel&job_id={job.id}"
                     },
                     {
@@ -1837,7 +1837,7 @@ class JobHandler:
             # 建立按鈕範本
             template = {
                 "type": "buttons",
-                "title": f"報名#{i}",
+                "title": f"報班#{i}",
                 "text": app_text,
                 "actions": actions
             }
@@ -1848,11 +1848,11 @@ class JobHandler:
             
             messages.append({
                 "type": "template",
-                "altText": f"報名記錄 #{i} - {job.name}",
+                "altText": f"報班記錄 #{i} - {job.name}",
                 "template": template
             })
         
-        # 如果報名記錄很多，加入返回按鈕
+        # 如果報班記錄很多，加入返回按鈕
         if len(applications) > 1:
             messages.append({
                 "type": "template",
@@ -2055,7 +2055,7 @@ class JobHandler:
 • Email：{user.email or '未填寫'}
 • 註冊時間：{user.created_at}
 
-現在您可以開始報名工作了！"""
+現在您可以開始報班工作了！"""
                 
                 # 使用 send_multiple_messages 在同一個回覆中發送成功訊息和主選單
                 # 先準備主選單的內容（與 show_main_menu 一致）
@@ -2070,7 +2070,7 @@ class JobHandler:
                     },
                     {
                         "type": "postback",
-                        "label": "查詢已報名",
+                        "label": "查詢已報班",
                         "data": "action=job&step=my_applications"
                     }
                 ])
@@ -2101,7 +2101,7 @@ class JobHandler:
                         "altText": "主選單",
                         "template": {
                             "type": "buttons",
-                            "title": "Good Jobs 報名系統",
+                            "title": "Good Jobs 報班系統",
                             "text": menu_text,
                             "actions": actions
                         }
@@ -2401,7 +2401,7 @@ class JobHandler:
         
         # 顯示確認訊息（LINE 按鈕範本 text 限制 60 字元）
         # 使用簡潔版本
-        confirm_text = "⚠️ 確認取消註冊\n\n取消後將無法報名工作，且無法復原。\n\n確定要取消嗎？"
+        confirm_text = "⚠️ 確認取消註冊\n\n取消後將無法報班工作，且無法復原。\n\n確定要取消嗎？"
         
         actions = [
             {
@@ -2441,7 +2441,7 @@ class JobHandler:
         success = self.auth_service.delete_line_user(user_id)
         
         if success:
-            # 同時取消該使用者的所有報名記錄
+            # 同時取消該使用者的所有報班記錄
             applications = self.application_service.get_user_applications(user_id)
             for app in applications:
                 self.application_service.cancel_application(user_id, app.job_id)
@@ -2554,7 +2554,7 @@ class JobHandler:
             },
             {
                 "type": "postback",
-                "label": "查詢已報名",
+                "label": "查詢已報班",
                 "data": "action=job&step=my_applications"
             }
         ])
@@ -2575,11 +2575,11 @@ class JobHandler:
         
         menu_text = "請選擇您需要的服務："
         if not is_registered:
-            menu_text = "⚠️ 您尚未註冊，請先完成註冊才能報名工作。\n\n" + menu_text
+            menu_text = "⚠️ 您尚未註冊，請先完成註冊才能報班工作。\n\n" + menu_text
         
         self.message_service.send_buttons_template(
             reply_token,
-            "Good Jobs 報名系統",
+            "Good Jobs 報班系統",
             menu_text,
             actions
         )
@@ -2587,7 +2587,7 @@ class JobHandler:
 # ==================== 模組 5: FastAPI 後台 API ====================
 
 # 建立 FastAPI 應用程式
-api_app = FastAPI(title="Good Jobs 報名系統 API", version="1.0.0")
+api_app = FastAPI(title="Good Jobs 報班系統 API", version="1.0.0")
 
 # 初始化資料庫
 try:
@@ -2763,7 +2763,7 @@ def get_job_applications(
     job_id: str,
     current_user: UserInDB = Depends(require_admin)
 ):
-    """取得工作的報名清單（需要管理員權限）"""
+    """取得工作的報班清單（需要管理員權限）"""
     job = job_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="工作不存在")
@@ -2773,7 +2773,7 @@ def get_job_applications(
 
 @api_app.get("/api/applications", response_model=List[Application])
 def get_all_applications(current_user: UserInDB = Depends(require_admin)):
-    """取得所有報名記錄（需要管理員權限）"""
+    """取得所有報班記錄（需要管理員權限）"""
     db = SessionLocal()
     try:
         app_models = db.query(ApplicationModel).order_by(ApplicationModel.applied_at.desc()).all()
@@ -2842,7 +2842,7 @@ def get_user(
 # ==================== 模組 6: LINE Bot 主應用程式 ====================
 
 class PartTimeJobBot:
-    """Good Jobs 報名系統主應用程式"""
+    """Good Jobs 報班系統主應用程式"""
     
     def __init__(self, channel_access_token: str, channel_secret: Optional[str] = None, auth_service: Optional[AuthService] = None):
         # 初始化服務
@@ -2979,7 +2979,7 @@ class PartTimeJobBot:
             self.handler.show_main_menu(reply_token, user_id)
         elif message_text in ['工作列表', '查看工作', 'list']:
             self.handler.show_available_jobs(reply_token, user_id)
-        elif message_text in ['已報名', '我的報名', '報名記錄', 'my_applications']:
+        elif message_text in ['已報班', '我的報班', '報班記錄', 'my_applications']:
             self.handler.show_user_applications(reply_token, user_id)
         elif message_text in ['註冊', 'register', 'Register', 'REGISTER']:
             self.handler.handle_register(reply_token, user_id)
