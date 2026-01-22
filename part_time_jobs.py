@@ -1,5 +1,5 @@
 """
-兼職工作報名系統
+Good Job 報名系統
 
 使用 FastAPI 作為後台 API，LINE Bot 作為前台介面
 包含：
@@ -71,13 +71,16 @@ class User(BaseModel):
     username: str
     email: Optional[str] = None
     full_name: Optional[str] = None
+    phone: Optional[str] = None  # 手機號碼
+    address: Optional[str] = None  # 地址
     is_admin: bool = False
     is_active: bool = True
     created_at: str
+    line_user_id: Optional[str] = None  # LINE User ID
 
 class UserInDB(User):
     """資料庫中的使用者模型（包含密碼）"""
-    hashed_password: str
+    hashed_password: Optional[str] = None  # LINE 使用者可能沒有密碼
 
 class UserCreate(BaseModel):
     """建立使用者請求"""
@@ -486,6 +489,8 @@ class AuthService:
         self.users: Dict[str, UserInDB] = {}
         # 使用者 ID 索引：{user_id: username}
         self.user_ids: Dict[str, str] = {}
+        # LINE User ID 索引：{line_user_id: username}
+        self.line_user_ids: Dict[str, str] = {}
         self._create_default_admin()
     
     def _create_default_admin(self):
@@ -562,19 +567,140 @@ class AuthService:
             full_name=user_in_db.full_name,
             is_admin=user_in_db.is_admin,
             is_active=user_in_db.is_active,
-            created_at=user_in_db.created_at
+            created_at=user_in_db.created_at,
+            line_user_id=user_in_db.line_user_id
+        )
+    
+    def create_line_user(self, line_user_id: str, full_name: Optional[str] = None, 
+                        phone: Optional[str] = None, address: Optional[str] = None, 
+                        email: Optional[str] = None) -> User:
+        """
+        建立 LINE 使用者（不需要密碼）
+        
+        參數:
+            line_user_id: LINE User ID
+            full_name: 使用者全名
+            phone: 手機號碼
+            address: 地址
+            email: 電子郵件
+        
+        返回:
+            User: 建立的使用者物件
+        """
+        # 使用 LINE User ID 作為使用者名稱（key）
+        username = line_user_id
+        
+        # 檢查是否已註冊（直接使用 LINE User ID 作為 key）
+        if username in self.users:
+            # 如果已存在，更新現有使用者資料（只更新非 None 的欄位）
+            user_in_db = self.users[username]
+            # 更新資料（如果提供新值則更新）
+            if full_name is not None and full_name:
+                user_in_db.full_name = full_name
+            if phone is not None and phone:
+                user_in_db.phone = phone
+            if address is not None and address:
+                user_in_db.address = address
+            if email is not None:  # email 可以是 None（可選欄位）
+                user_in_db.email = email
+        else:
+            # 產生使用者 ID
+            user_id = self._get_next_user_id()
+            
+            # 建立使用者（LINE 使用者不需要密碼）
+            user_in_db = UserInDB(
+                id=user_id,
+                username=username,
+                email=email,
+                full_name=full_name or f"LINE使用者_{line_user_id[:8]}",
+                phone=phone,
+                address=address,
+                is_admin=False,
+                is_active=True,
+                created_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                hashed_password=None,  # LINE 使用者不需要密碼
+                line_user_id=line_user_id
+            )
+            
+            self.users[username] = user_in_db
+            self.user_ids[user_id] = username
+            # 保留 line_user_ids 索引以向後兼容（但現在 username = line_user_id）
+            self.line_user_ids[line_user_id] = username
+        
+        print(f"✅ 已建立 LINE 使用者：{username} (LINE User ID: {line_user_id})")
+        
+        # 返回使用者（不包含密碼）
+        return User(
+            id=user_in_db.id,
+            username=user_in_db.username,
+            email=user_in_db.email,
+            full_name=user_in_db.full_name,
+            phone=user_in_db.phone,
+            address=user_in_db.address,
+            is_admin=user_in_db.is_admin,
+            is_active=user_in_db.is_active,
+            created_at=user_in_db.created_at,
+            line_user_id=user_in_db.line_user_id
         )
     
     def get_user_by_username(self, username: str) -> Optional[UserInDB]:
         """根據使用者名稱取得使用者"""
         return self.users.get(username)
     
+    def get_user_by_line_id(self, line_user_id: str) -> Optional[UserInDB]:
+        """根據 LINE User ID 取得使用者"""
+        # 直接使用 LINE User ID 作為使用者名稱
+        return self.users.get(line_user_id)
+    
+    def is_line_user_registered(self, line_user_id: str) -> bool:
+        """檢查 LINE 使用者是否已註冊"""
+        # 直接使用 LINE User ID 作為使用者名稱（key）檢查
+        return line_user_id in self.users
+    
+    def delete_line_user(self, line_user_id: str) -> bool:
+        """
+        取消 LINE 使用者註冊
+        
+        參數:
+            line_user_id: LINE User ID
+        
+        返回:
+            bool: 是否成功取消
+        """
+        username = line_user_id
+        
+        if username not in self.users:
+            return False
+        
+        user = self.users.get(username)
+        if not user:
+            return False
+        
+        # 取消使用者註冊
+        user_id = user.id
+        del self.users[username]
+        
+        # 刪除索引
+        if user_id in self.user_ids:
+            del self.user_ids[user_id]
+        
+        if line_user_id in self.line_user_ids:
+            del self.line_user_ids[line_user_id]
+        
+        print(f"✅ 已取消 LINE 使用者註冊：{username} (LINE User ID: {line_user_id})")
+        return True
+    
     def authenticate_user(self, username: str, password: str) -> Optional[UserInDB]:
         """驗證使用者"""
         user = self.get_user_by_username(username)
         if not user:
             return None
-        if not self._verify_password(password, user.hashed_password):
+        # LINE 使用者可能沒有密碼，跳過密碼驗證
+        if user.hashed_password is not None:
+            if not self._verify_password(password, user.hashed_password):
+                return None
+        else:
+            # LINE 使用者不需要密碼驗證，但這裡是 API 登入，需要密碼
             return None
         if not user.is_active:
             return None
@@ -736,10 +862,15 @@ class LineMessageService:
 class JobHandler:
     """工作事件處理器"""
     
-    def __init__(self, job_service: JobService, application_service: ApplicationService, message_service: LineMessageService):
+    def __init__(self, job_service: JobService, application_service: ApplicationService, message_service: LineMessageService, auth_service: Optional[AuthService] = None):
         self.job_service = job_service
         self.application_service = application_service
         self.message_service = message_service
+        self.auth_service = auth_service
+        # 註冊狀態管理：{user_id: {'step': step, 'data': {...}}}
+        self.registration_states: Dict[str, Dict] = {}
+        # 修改資料狀態管理：{user_id: {'step': step, 'field': field_name}}
+        self.edit_profile_states: Dict[str, Dict] = {}
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
         """顯示可報名的工作列表"""
@@ -782,6 +913,11 @@ class JobHandler:
             encoded_location = urllib.parse.quote(job.location)
             navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
             
+            # 檢查使用者是否已註冊
+            is_registered = True
+            if self.auth_service:
+                is_registered = self.auth_service.is_line_user_registered(user_id) if user_id else False
+            
             # 建立按鈕動作
             actions = [
                 {
@@ -791,8 +927,15 @@ class JobHandler:
                 }
             ]
             
+            # 如果未註冊，加入註冊按鈕
+            if not is_registered:
+                actions.append({
+                    "type": "postback",
+                    "label": "📝 註冊",
+                    "data": "action=register&step=register"
+                })
             # 根據報名狀態加入不同按鈕
-            if is_applied:
+            elif is_applied:
                 # 已報名：加入取消報名按鈕
                 actions.append({
                     "type": "postback",
@@ -893,9 +1036,17 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
             return
         
+        # 檢查使用者是否已註冊
+        is_registered = True
+        if self.auth_service:
+            is_registered = self.auth_service.is_line_user_registered(user_id)
+        
         # 檢查使用者是否已報名
-        application = self.application_service.get_user_application_for_job(user_id, job_id)
-        is_applied = application is not None
+        application = None
+        is_applied = False
+        if is_registered:
+            application = self.application_service.get_user_application_for_job(user_id, job_id)
+            is_applied = application is not None
         
         # 建立工作詳情訊息
         job_detail = f"""📌 {job.name}
@@ -907,7 +1058,7 @@ class JobHandler:
         for shift in job.shifts:
             job_detail += f"   • {shift}\n"
         
-        if is_applied:
+        if is_applied and application:
             job_detail += f"\n✅ 您已報名：{application.shift}"
         
         # 建立 Google Maps 導航 URL
@@ -916,7 +1067,14 @@ class JobHandler:
         
         # 建立按鈕
         actions = []
-        if is_applied:
+        if not is_registered:
+            # 未註冊使用者：顯示註冊按鈕
+            actions.append({
+                "type": "postback",
+                "label": "📝 註冊",
+                "data": "action=register&step=register"
+            })
+        elif is_applied:
             actions.append({
                 "type": "postback",
                 "label": "取消報名",
@@ -972,6 +1130,14 @@ class JobHandler:
     
     def handle_apply_job(self, reply_token: str, user_id: str, job_id: str) -> None:
         """處理報名工作流程 - 顯示班別選擇"""
+        # 檢查使用者是否已註冊
+        if self.auth_service and not self.auth_service.is_line_user_registered(user_id):
+            self.message_service.send_text(
+                reply_token,
+                "❌ 您尚未註冊，無法報名工作。\n\n請先使用「註冊」功能完成註冊。"
+            )
+            return
+        
         job = self.job_service.get_job(job_id)
         if not job:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
@@ -1016,6 +1182,14 @@ class JobHandler:
     
     def handle_select_shift(self, reply_token: str, user_id: str, job_id: str, shift: str) -> None:
         """處理選擇班別並完成報名"""
+        # 檢查使用者是否已註冊
+        if self.auth_service and not self.auth_service.is_line_user_registered(user_id):
+            self.message_service.send_text(
+                reply_token,
+                "❌ 您尚未註冊，無法報名工作。\n\n請先使用「註冊」功能完成註冊。"
+            )
+            return
+        
         job = self.job_service.get_job(job_id)
         if not job:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
@@ -1202,24 +1376,39 @@ class JobHandler:
             encoded_location = urllib.parse.quote(job.location)
             navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
             
+            # 檢查使用者是否已註冊
+            is_registered = True
+            if self.auth_service:
+                is_registered = self.auth_service.is_line_user_registered(user_id)
+            
             # 建立按鈕動作
             actions = [
                 {
                     "type": "postback",
                     "label": "查看詳情",
                     "data": f"action=job&step=detail&job_id={job.id}"
-                },
-                {
-                    "type": "postback",
-                    "label": "取消報名",
-                    "data": f"action=job&step=cancel&job_id={job.id}"
-                },
-                {
-                    "type": "uri",
-                    "label": "導航",
-                    "uri": navigation_url
                 }
             ]
+            
+            if is_registered:
+                actions.extend([
+                    {
+                        "type": "postback",
+                        "label": "取消報名",
+                        "data": f"action=job&step=cancel&job_id={job.id}"
+                    },
+                    {
+                        "type": "uri",
+                        "label": "導航",
+                        "uri": navigation_url
+                    }
+                ])
+            else:
+                actions.append({
+                    "type": "postback",
+                    "label": "📝 註冊",
+                    "data": "action=register&step=register"
+                })
             
             # 建立按鈕範本
             template = {
@@ -1264,9 +1453,676 @@ class JobHandler:
         
         self.message_service.send_multiple_messages(reply_token, messages)
     
-    def show_main_menu(self, reply_token: str) -> None:
-        """顯示主選單"""
+    def handle_register(self, reply_token: str, user_id: str) -> None:
+        """處理 LINE 使用者註冊 - 開始註冊流程"""
+        if not self.auth_service:
+            self.message_service.send_text(reply_token, "❌ 註冊功能暫時無法使用。")
+            return
+        
+        # 檢查是否已註冊
+        if self.auth_service.is_line_user_registered(user_id):
+            user = self.auth_service.get_user_by_line_id(user_id)
+            if user:
+                user_info = f"""✅ 您已經註冊過了！
+
+📋 您的帳號資訊：
+• 姓名：{user.full_name or '未填寫'}
+• 手機：{user.phone or '未填寫'}
+• 地址：{user.address or '未填寫'}
+• Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}"""
+                self.message_service.send_text(reply_token, user_info)
+            return
+        
+        # 開始註冊流程 - 第一步：輸入姓名
+        self.registration_states[user_id] = {
+            'step': 'name',
+            'data': {}
+        }
+        
+        self.message_service.send_text(
+            reply_token,
+            "📝 歡迎註冊！請依序填寫以下資料：\n\n第一步：請輸入您的姓名"
+        )
+    
+    def handle_register_input(self, reply_token: str, user_id: str, text: str) -> None:
+        """處理註冊資料輸入"""
+        if not self.auth_service:
+            return
+        
+        # 檢查是否在註冊流程中
+        if user_id not in self.registration_states:
+            return
+        
+        # 檢查是否要取消註冊
+        if text.strip().lower() in ['取消', 'cancel', '取消註冊']:
+            del self.registration_states[user_id]
+            self.message_service.send_text(
+                reply_token,
+                "❌ 已取消註冊流程。\n\n如需註冊，請重新發送「註冊」。"
+            )
+            return
+        
+        state = self.registration_states[user_id]
+        step = state['step']
+        data = state['data']
+        
+        if step == 'name':
+            # 儲存姓名，進入下一步
+            name = text.strip()
+            if not name:
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 姓名不能為空，請重新輸入。"
+                )
+                return
+            data['full_name'] = name
+            state['step'] = 'phone'
+            self.message_service.send_text(
+                reply_token,
+                f"✅ 姓名已記錄：{data['full_name']}\n\n第二步：請輸入您的手機號碼\n（格式：09XX-XXX-XXX 或 09XXXXXXXX）"
+            )
+        
+        elif step == 'phone':
+            # 驗證並儲存手機號碼
+            phone = text.strip().replace('-', '').replace(' ', '')
+            # 簡單驗證：台灣手機號碼格式
+            if not phone.isdigit() or len(phone) != 10 or not phone.startswith('09'):
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 手機號碼格式不正確，請輸入10位數手機號碼（例如：0912345678）"
+                )
+                return
+            
+            data['phone'] = phone
+            state['step'] = 'address'
+            self.message_service.send_text(
+                reply_token,
+                f"✅ 手機號碼已記錄：{data['phone']}\n\n第三步：請輸入您的地址"
+            )
+        
+        elif step == 'address':
+            # 儲存地址，進入下一步
+            address = text.strip()
+            if not address:
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 地址不能為空，請重新輸入。"
+                )
+                return
+            data['address'] = address
+            state['step'] = 'email'
+            self.message_service.send_text(
+                reply_token,
+                f"✅ 地址已記錄：{data['address']}\n\n第四步：請輸入您的 Email\n（可選，直接輸入「跳過」即可）"
+            )
+        
+        elif step == 'email':
+            # 處理 Email（可選）
+            email = text.strip()
+            if email.lower() in ['跳過', 'skip', '略過', '']:
+                data['email'] = None
+            else:
+                # 簡單的 Email 驗證
+                if '@' not in email or '.' not in email.split('@')[-1]:
+                    self.message_service.send_text(
+                        reply_token,
+                        "❌ Email 格式不正確，請重新輸入或輸入「跳過」"
+                    )
+                    return
+                data['email'] = email
+            
+            # 完成註冊
+            try:
+                # 取得並驗證必填欄位
+                full_name = data.get('full_name', '').strip()
+                phone = data.get('phone', '').strip()
+                address = data.get('address', '').strip()
+                email = data.get('email')  # email 可能是 None（可選）
+                if email:
+                    email = email.strip() if email else None
+                
+                # 驗證必填欄位
+                if not full_name:
+                    self.message_service.send_text(
+                        reply_token,
+                        "❌ 姓名為必填欄位，請重新開始註冊流程。"
+                    )
+                    if user_id in self.registration_states:
+                        del self.registration_states[user_id]
+                    return
+                
+                if not phone:
+                    self.message_service.send_text(
+                        reply_token,
+                        "❌ 手機號碼為必填欄位，請重新開始註冊流程。"
+                    )
+                    if user_id in self.registration_states:
+                        del self.registration_states[user_id]
+                    return
+                
+                if not address:
+                    self.message_service.send_text(
+                        reply_token,
+                        "❌ 地址為必填欄位，請重新開始註冊流程。"
+                    )
+                    if user_id in self.registration_states:
+                        del self.registration_states[user_id]
+                    return
+                
+                # 建立使用者（確保所有欄位都有值）
+                user = self.auth_service.create_line_user(
+                    line_user_id=user_id,
+                    full_name=full_name,
+                    phone=phone,
+                    address=address,
+                    email=email
+                )
+                
+                # 清除註冊狀態
+                del self.registration_states[user_id]
+                
+                success_message = f"""✅ 註冊成功！
+
+📋 您的註冊資訊：
+• 姓名：{user.full_name}
+• 手機：{user.phone}
+• 地址：{user.address}
+• Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}
+
+現在您可以開始報名工作了！"""
+                
+                # 使用 send_multiple_messages 在同一個回覆中發送成功訊息和主選單
+                # 先準備主選單的內容（與 show_main_menu 一致）
+                is_registered = True  # 剛註冊完成，一定是已註冊狀態
+                actions = []
+                
+                actions.extend([
+                    {
+                        "type": "postback",
+                        "label": "查看工作列表",
+                        "data": "action=job&step=list"
+                    },
+                    {
+                        "type": "postback",
+                        "label": "查詢已報名",
+                        "data": "action=job&step=my_applications"
+                    }
+                ])
+                
+                # 已註冊使用者：顯示查看註冊資料選項
+                if is_registered:
+                    actions.append({
+                        "type": "postback",
+                        "label": "👤 查看註冊資料",
+                        "data": "action=view_profile&step=view"
+                    })
+                
+                actions.append({
+                    "type": "message",
+                    "label": "聯絡客服",
+                    "text": "我需要客服協助"
+                })
+                
+                menu_text = "請選擇您需要的服務："
+                
+                messages = [
+                    {
+                        "type": "text",
+                        "text": success_message
+                    },
+                    {
+                        "type": "template",
+                        "altText": "主選單",
+                        "template": {
+                            "type": "buttons",
+                            "title": "Good Job 報名系統",
+                            "text": menu_text,
+                            "actions": actions
+                        }
+                    }
+                ]
+                
+                self.message_service.send_multiple_messages(reply_token, messages)
+            except Exception as e:
+                print(f"❌ 註冊失敗：{e}")
+                import traceback
+                traceback.print_exc()
+                # 清除註冊狀態
+                if user_id in self.registration_states:
+                    del self.registration_states[user_id]
+                self.message_service.send_text(
+                    reply_token,
+                    f"❌ 註冊失敗：{str(e)}\n\n請稍後再試或聯絡客服。"
+                )
+    
+    def handle_edit_profile(self, reply_token: str, user_id: str) -> None:
+        """處理修改註冊資料 - 選擇要修改的欄位"""
+        if not self.auth_service:
+            self.message_service.send_text(reply_token, "❌ 修改註冊資料功能暫時無法使用。")
+            return
+        
+        # 檢查是否已註冊
+        if not self.auth_service.is_line_user_registered(user_id):
+            self.message_service.send_text(
+                reply_token,
+                "❌ 您尚未註冊，無法修改註冊資料。\n\n請先使用「註冊」功能完成註冊。"
+            )
+            return
+        
+        # 取得當前使用者資料
+        user = self.auth_service.get_user_by_line_id(user_id)
+        if not user:
+            self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
+            return
+        
+        # 顯示選擇要修改的欄位
         actions = [
+            {
+                "type": "postback",
+                "label": "📱 手機號碼",
+                "data": f"action=edit_profile&step=input&field=phone"
+            },
+            {
+                "type": "postback",
+                "label": "📍 地址",
+                "data": f"action=edit_profile&step=input&field=address"
+            },
+            {
+                "type": "postback",
+                "label": "📧 Email",
+                "data": f"action=edit_profile&step=input&field=email"
+            },
+            {
+                "type": "postback",
+                "label": "返回",
+                "data": "action=view_profile&step=view"
+            }
+        ]
+        
+        # LINE 按鈕範本 text 欄位限制 60 字元，需要簡化顯示
+        # 使用最簡潔的版本，只顯示關鍵提示
+        current_info = "📋修改註冊資料\n\n請選擇要修改的欄位："
+        
+        try:
+            response = self.message_service.send_buttons_template(
+                reply_token,
+                "修改註冊資料",
+                current_info,
+                actions
+            )
+            response.raise_for_status()  # 檢查 HTTP 狀態碼
+        except requests.exceptions.RequestException as e:
+            print(f"❌ 發送修改註冊資料選單失敗: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"   回應內容：{e.response.text}")
+            # 嘗試發送文字訊息作為備用
+            backup_message = f"""📋 您目前的資料：
+
+• 姓名：{user.full_name or '未填寫'}（不可修改）
+• 手機：{user.phone or '未填寫'}
+• 地址：{user.address or '未填寫'}
+• Email：{user.email or '未填寫'}
+
+請點擊主選單中的「修改註冊資料」來修改資料。"""
+            self.message_service.send_text(reply_token, backup_message)
+    
+    def handle_edit_profile_input(self, reply_token: str, user_id: str, text: str) -> None:
+        """處理修改註冊資料輸入"""
+        if not self.auth_service:
+            return
+        
+        # 檢查是否在修改流程中
+        if user_id not in self.edit_profile_states:
+            return
+        
+        # 檢查是否要取消修改
+        if text.strip().lower() in ['取消', 'cancel', '取消修改']:
+            del self.edit_profile_states[user_id]
+            self.message_service.send_text(
+                reply_token,
+                "❌ 已取消修改流程。"
+            )
+            return
+        
+        state = self.edit_profile_states[user_id]
+        field = state.get('field')
+        
+        if field == 'phone':
+            # 驗證並更新手機號碼
+            phone = text.strip().replace('-', '').replace(' ', '')
+            if not phone.isdigit() or len(phone) != 10 or not phone.startswith('09'):
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 手機號碼格式不正確，請輸入10位數手機號碼（例如：0912345678）\n\n或輸入「取消」取消修改。"
+                )
+                return
+            
+            # 更新資料
+            user = self.auth_service.get_user_by_line_id(user_id)
+            if user:
+                updated_user = self.auth_service.create_line_user(
+                    line_user_id=user_id,
+                    full_name=user.full_name,  # 保持原姓名
+                    phone=phone,
+                    address=user.address,  # 保持原地址
+                    email=user.email  # 保持原 Email
+                )
+                
+                # 清除修改狀態
+                del self.edit_profile_states[user_id]
+                
+                # 發送成功訊息並返回查看註冊資料頁面
+                success_message = f"✅ 手機號碼已更新為：{phone}"
+                self._send_update_success_and_show_profile(reply_token, user_id, success_message)
+            else:
+                del self.edit_profile_states[user_id]
+                self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
+        
+        elif field == 'address':
+            # 更新地址
+            address = text.strip()
+            if not address:
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 地址不能為空，請重新輸入。\n\n或輸入「取消」取消修改。"
+                )
+                return
+            
+            # 更新資料
+            user = self.auth_service.get_user_by_line_id(user_id)
+            if user:
+                updated_user = self.auth_service.create_line_user(
+                    line_user_id=user_id,
+                    full_name=user.full_name,  # 保持原姓名
+                    phone=user.phone,  # 保持原手機
+                    address=address,
+                    email=user.email  # 保持原 Email
+                )
+                
+                # 清除修改狀態
+                del self.edit_profile_states[user_id]
+                
+                # 發送成功訊息並返回查看註冊資料頁面
+                success_message = f"✅ 地址已更新為：{address}"
+                self._send_update_success_and_show_profile(reply_token, user_id, success_message)
+            else:
+                del self.edit_profile_states[user_id]
+                self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
+        
+        elif field == 'email':
+            # 更新 Email
+            email = text.strip()
+            if email.lower() in ['跳過', 'skip', '略過', '清除', '清空', '']:
+                email = None
+            else:
+                # 簡單的 Email 驗證
+                if '@' not in email or '.' not in email.split('@')[-1]:
+                    self.message_service.send_text(
+                        reply_token,
+                        "❌ Email 格式不正確，請重新輸入或輸入「跳過」清除 Email。"
+                    )
+                    return
+            
+            # 更新資料
+            user = self.auth_service.get_user_by_line_id(user_id)
+            if user:
+                updated_user = self.auth_service.create_line_user(
+                    line_user_id=user_id,
+                    full_name=user.full_name,  # 保持原姓名
+                    phone=user.phone,  # 保持原手機
+                    address=user.address,  # 保持原地址
+                    email=email
+                )
+                
+                # 清除修改狀態
+                del self.edit_profile_states[user_id]
+                
+                # 發送成功訊息並返回查看註冊資料頁面
+                if email:
+                    success_message = f"✅ Email 已更新為：{email}"
+                else:
+                    success_message = "✅ Email 已清除。"
+                self._send_update_success_and_show_profile(reply_token, user_id, success_message)
+            else:
+                del self.edit_profile_states[user_id]
+                self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
+    
+    def _send_update_success_and_show_profile(self, reply_token: str, user_id: str, success_message: str) -> None:
+        """發送更新成功訊息並顯示註冊資料頁面"""
+        # 取得更新後的使用者資料
+        user = self.auth_service.get_user_by_line_id(user_id) if self.auth_service else None
+        if not user:
+            # 如果無法取得使用者資料，只發送成功訊息
+            self.message_service.send_text(reply_token, success_message)
+            return
+        
+        # 顯示更新後的註冊資料
+        user_info = f"""📋 您的註冊資料：
+
+• 姓名：{user.full_name or '未填寫'}
+• 手機：{user.phone or '未填寫'}
+• 地址：{user.address or '未填寫'}
+• Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}"""
+        
+        # 準備操作按鈕
+        actions = [
+            {
+                "type": "postback",
+                "label": "✏️ 修改資料",
+                "data": "action=edit_profile&step=select_field"
+            },
+            {
+                "type": "postback",
+                "label": "🗑️ 取消註冊",
+                "data": "action=delete_registration&step=confirm"
+            },
+            {
+                "type": "postback",
+                "label": "返回主選單",
+                "data": "action=job&step=menu"
+            }
+        ]
+        
+        # 使用 send_multiple_messages 在同一個回覆中發送成功訊息、更新後的資料和操作按鈕
+        messages = [
+            {
+                "type": "text",
+                "text": success_message
+            },
+            {
+                "type": "text",
+                "text": user_info
+            },
+            {
+                "type": "template",
+                "altText": "註冊資料操作",
+                "template": {
+                    "type": "buttons",
+                    "title": "註冊資料",
+                    "text": "請選擇操作：",
+                    "actions": actions
+                }
+            }
+        ]
+        
+        try:
+            self.message_service.send_multiple_messages(reply_token, messages)
+        except Exception as e:
+            print(f"❌ 發送更新成功訊息和註冊資料失敗: {e}")
+            # 如果發送失敗，至少發送成功訊息
+            self.message_service.send_text(reply_token, success_message)
+    
+    def handle_delete_registration(self, reply_token: str, user_id: str) -> None:
+        """處理取消註冊 - 顯示確認訊息"""
+        if not self.auth_service:
+            self.message_service.send_text(reply_token, "❌ 取消註冊功能暫時無法使用。")
+            return
+        
+        # 檢查是否已註冊
+        if not self.auth_service.is_line_user_registered(user_id):
+            self.message_service.send_text(
+                reply_token,
+                "❌ 您尚未註冊，無需取消。"
+            )
+            return
+        
+        # 取得使用者資料
+        user = self.auth_service.get_user_by_line_id(user_id)
+        if not user:
+            self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
+            return
+        
+        # 顯示確認訊息（LINE 按鈕範本 text 限制 60 字元）
+        # 使用簡潔版本
+        confirm_text = "⚠️ 確認取消註冊\n\n取消後將無法報名工作，且無法復原。\n\n確定要取消嗎？"
+        
+        actions = [
+            {
+                "type": "postback",
+                "label": "確認取消",
+                "data": "action=delete_registration&step=confirm_delete"
+            },
+            {
+                "type": "postback",
+                "label": "返回",
+                "data": "action=view_profile&step=view"
+            }
+        ]
+        
+        self.message_service.send_buttons_template(
+            reply_token,
+            "取消註冊",
+            confirm_text,
+            actions
+        )
+    
+    def handle_confirm_delete_registration(self, reply_token: str, user_id: str) -> None:
+        """處理確認取消註冊"""
+        if not self.auth_service:
+            self.message_service.send_text(reply_token, "❌ 取消註冊功能暫時無法使用。")
+            return
+        
+        # 檢查是否已註冊
+        if not self.auth_service.is_line_user_registered(user_id):
+            self.message_service.send_text(
+                reply_token,
+                "❌ 您尚未註冊，無需取消。"
+            )
+            return
+        
+        # 取消使用者註冊
+        success = self.auth_service.delete_line_user(user_id)
+        
+        if success:
+            # 同時取消該使用者的所有報名記錄
+            applications = self.application_service.get_user_applications(user_id)
+            for app in applications:
+                self.application_service.cancel_application(user_id, app.job_id)
+            
+            self.message_service.send_text(
+                reply_token,
+                "✅ 您的註冊已成功取消。\n\n如需重新使用服務，請重新註冊。"
+            )
+        else:
+            self.message_service.send_text(
+                reply_token,
+                "❌ 取消註冊失敗，請稍後再試或聯絡客服。"
+            )
+    
+    def show_user_profile(self, reply_token: str, user_id: str) -> None:
+        """顯示使用者註冊資料"""
+        if not self.auth_service:
+            self.message_service.send_text(reply_token, "❌ 查看註冊資料功能暫時無法使用。")
+            return
+        
+        # 檢查是否已註冊
+        if not self.auth_service.is_line_user_registered(user_id):
+            self.message_service.send_text(
+                reply_token,
+                "❌ 您尚未註冊，無法查看註冊資料。\n\n請先使用「註冊」功能完成註冊。"
+            )
+            return
+        
+        # 取得使用者資料
+        user = self.auth_service.get_user_by_line_id(user_id)
+        if not user:
+            self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
+            return
+        
+        # 顯示註冊資料（使用文字訊息，因為內容較長）
+        user_info = f"""📋 您的註冊資料：
+
+• 姓名：{user.full_name or '未填寫'}
+• 手機：{user.phone or '未填寫'}
+• 地址：{user.address or '未填寫'}
+• Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}"""
+        
+        # 準備操作按鈕
+        actions = [
+            {
+                "type": "postback",
+                "label": "✏️ 修改資料",
+                "data": "action=edit_profile&step=select_field"
+            },
+            {
+                "type": "postback",
+                "label": "🗑️ 取消註冊",
+                "data": "action=delete_registration&step=confirm"
+            },
+            {
+                "type": "postback",
+                "label": "返回主選單",
+                "data": "action=job&step=menu"
+            }
+        ]
+        
+        # 使用 send_multiple_messages 在同一個回覆中發送資料和按鈕
+        messages = [
+            {
+                "type": "text",
+                "text": user_info
+            },
+            {
+                "type": "template",
+                "altText": "註冊資料操作",
+                "template": {
+                    "type": "buttons",
+                    "title": "註冊資料",
+                    "text": "請選擇操作：",
+                    "actions": actions
+                }
+            }
+        ]
+        
+        try:
+            self.message_service.send_multiple_messages(reply_token, messages)
+        except Exception as e:
+            print(f"❌ 發送註冊資料失敗: {e}")
+            # 如果發送失敗，至少發送文字訊息
+            self.message_service.send_text(reply_token, user_info)
+    
+    def show_main_menu(self, reply_token: str, user_id: Optional[str] = None) -> None:
+        """顯示主選單"""
+        # 檢查使用者是否已註冊
+        is_registered = False
+        if self.auth_service and user_id:
+            is_registered = self.auth_service.is_line_user_registered(user_id)
+        
+        actions = []
+        
+        if not is_registered:
+            # 未註冊使用者：顯示註冊選項
+            actions.append({
+                "type": "postback",
+                "label": "📝 註冊",
+                "data": "action=register&step=register"
+            })
+        
+        actions.extend([
             {
                 "type": "postback",
                 "label": "查看工作列表",
@@ -1276,25 +2132,38 @@ class JobHandler:
                 "type": "postback",
                 "label": "查詢已報名",
                 "data": "action=job&step=my_applications"
-            },
-            {
-                "type": "message",
-                "label": "聯絡客服",
-                "text": "我需要客服協助"
             }
-        ]
+        ])
+        
+        # 已註冊使用者：顯示查看註冊資料選項
+        if is_registered:
+            actions.append({
+                "type": "postback",
+                "label": "👤 查看註冊資料",
+                "data": "action=view_profile&step=view"
+            })
+        
+        actions.append({
+            "type": "message",
+            "label": "聯絡客服",
+            "text": "我需要客服協助"
+        })
+        
+        menu_text = "請選擇您需要的服務："
+        if not is_registered:
+            menu_text = "⚠️ 您尚未註冊，請先完成註冊才能報名工作。\n\n" + menu_text
         
         self.message_service.send_buttons_template(
             reply_token,
-            "兼職工作報名系統",
-            "請選擇您需要的服務：",
+            "Good Job 報名系統",
+            menu_text,
             actions
         )
 
 # ==================== 模組 5: FastAPI 後台 API ====================
 
 # 建立 FastAPI 應用程式
-api_app = FastAPI(title="兼職工作報名系統 API", version="1.0.0")
+api_app = FastAPI(title="Good Job 報名系統 API", version="1.0.0")
 
 # 全域服務實例（實際應用中應該使用依賴注入）
 job_service = JobService()
@@ -1337,9 +2206,12 @@ def get_current_user_info(current_user: UserInDB = Depends(get_current_active_us
         username=current_user.username,
         email=current_user.email,
         full_name=current_user.full_name,
+        phone=current_user.phone,
+        address=current_user.address,
         is_admin=current_user.is_admin,
         is_active=current_user.is_active,
-        created_at=current_user.created_at
+        created_at=current_user.created_at,
+        line_user_id=current_user.line_user_id
     )
 
 # ==================== 地理編碼 API ====================
@@ -1483,9 +2355,12 @@ def get_all_users(current_user: UserInDB = Depends(require_admin)):
             username=user_in_db.username,
             email=user_in_db.email,
             full_name=user_in_db.full_name,
+            phone=user_in_db.phone,
+            address=user_in_db.address,
             is_admin=user_in_db.is_admin,
             is_active=user_in_db.is_active,
-            created_at=user_in_db.created_at
+            created_at=user_in_db.created_at,
+            line_user_id=user_in_db.line_user_id
         ))
     return users
 
@@ -1503,22 +2378,25 @@ def get_user(
         username=user.username,
         email=user.email,
         full_name=user.full_name,
+        phone=user.phone,
+        address=user.address,
         is_admin=user.is_admin,
         is_active=user.is_active,
-        created_at=user.created_at
+        created_at=user.created_at,
+        line_user_id=user.line_user_id
     )
 
 # ==================== 模組 6: LINE Bot 主應用程式 ====================
 
 class PartTimeJobBot:
-    """兼職工作報名系統主應用程式"""
+    """Good Job 報名系統主應用程式"""
     
-    def __init__(self, channel_access_token: str, channel_secret: Optional[str] = None):
+    def __init__(self, channel_access_token: str, channel_secret: Optional[str] = None, auth_service: Optional[AuthService] = None):
         # 初始化服務
         self.job_service = job_service
         self.application_service = application_service
         self.message_service = LineMessageService(channel_access_token)
-        self.handler = JobHandler(self.job_service, self.application_service, self.message_service)
+        self.handler = JobHandler(self.job_service, self.application_service, self.message_service, auth_service)
         self.channel_secret = channel_secret
         
         # 建立 Flask 應用程式（用於 LINE Webhook）
@@ -1618,15 +2496,43 @@ class PartTimeJobBot:
         """處理文字訊息"""
         message_text = event['message'].get('text', '')
         
+        # 檢查是否在註冊流程中
+        if user_id in self.handler.registration_states:
+            # 如果輸入的是 menu 相關指令，先清除註冊狀態，然後顯示主選單
+            if message_text.strip().lower() in ['選單', 'menu', 'menus', 'Menu', 'MENU', '工作', 'jobs']:
+                # 清除註冊狀態
+                if user_id in self.handler.registration_states:
+                    del self.handler.registration_states[user_id]
+                self.handler.show_main_menu(reply_token, user_id)
+                return
+            # 其他情況正常處理註冊輸入
+            self.handler.handle_register_input(reply_token, user_id, message_text)
+            return
+        
+        # 檢查是否在修改資料流程中
+        if user_id in self.handler.edit_profile_states:
+            # 如果輸入的是 menu 相關指令，先清除修改狀態，然後顯示主選單
+            if message_text.strip().lower() in ['選單', 'menu', 'menus', 'Menu', 'MENU', '工作', 'jobs']:
+                # 清除修改狀態
+                if user_id in self.handler.edit_profile_states:
+                    del self.handler.edit_profile_states[user_id]
+                self.handler.show_main_menu(reply_token, user_id)
+                return
+            # 其他情況正常處理修改輸入
+            self.handler.handle_edit_profile_input(reply_token, user_id, message_text)
+            return
+        
         if message_text in ['選單', 'menu', 'Menu', 'MENU', '工作', 'jobs']:
-            self.handler.show_main_menu(reply_token)
+            self.handler.show_main_menu(reply_token, user_id)
         elif message_text in ['工作列表', '查看工作', 'list']:
             self.handler.show_available_jobs(reply_token, user_id)
         elif message_text in ['已報名', '我的報名', '報名記錄', 'my_applications']:
             self.handler.show_user_applications(reply_token, user_id)
+        elif message_text in ['註冊', 'register', 'Register', 'REGISTER']:
+            self.handler.handle_register(reply_token, user_id)
         else:
             # 預設顯示主選單
-            self.handler.show_main_menu(reply_token)
+            self.handler.show_main_menu(reply_token, user_id)
     
     def _handle_postback(self, event: Dict, reply_token: str, user_id: str) -> None:
         """處理 postback 事件"""
@@ -1645,7 +2551,41 @@ class PartTimeJobBot:
             shift = urllib.parse.unquote(shift)
         
         # 根據不同的步驟處理
-        if action == 'job':
+        if action == 'register':
+            if step == 'register':
+                self.handler.handle_register(reply_token, user_id)
+        elif action == 'edit_profile':
+            if step == 'select_field':
+                self.handler.handle_edit_profile(reply_token, user_id)
+            elif step == 'input':
+                field = parsed_data.get('field', [''])[0]
+                if field:
+                    # 設定修改狀態並提示輸入
+                    self.handler.edit_profile_states[user_id] = {'field': field}
+                    user = self.handler.auth_service.get_user_by_line_id(user_id) if self.handler.auth_service else None
+                    
+                    if field == 'phone':
+                        current = user.phone if user and user.phone else '未填寫'
+                        prompt = f"📱 修改手機號碼\n\n目前的手機號碼：{current}\n\n請輸入新的手機號碼（格式：09XX-XXX-XXX 或 09XXXXXXXX）：\n\n或輸入「取消」取消修改。"
+                    elif field == 'address':
+                        current = user.address if user and user.address else '未填寫'
+                        prompt = f"📍 修改地址\n\n目前的地址：{current}\n\n請輸入新的地址：\n\n或輸入「取消」取消修改。"
+                    elif field == 'email':
+                        current = user.email if user and user.email else '未填寫'
+                        prompt = f"📧 修改 Email\n\n目前的 Email：{current}\n\n請輸入新的 Email：\n\n（可選，輸入「跳過」可清除 Email）\n或輸入「取消」取消修改。"
+                    else:
+                        prompt = "請輸入新值："
+                    
+                    self.handler.message_service.send_text(reply_token, prompt)
+        elif action == 'view_profile':
+            if step == 'view':
+                self.handler.show_user_profile(reply_token, user_id)
+        elif action == 'delete_registration':
+            if step == 'confirm':
+                self.handler.handle_delete_registration(reply_token, user_id)
+            elif step == 'confirm_delete':
+                self.handler.handle_confirm_delete_registration(reply_token, user_id)
+        elif action == 'job':
             if step == 'list':
                 self.handler.show_available_jobs(reply_token, user_id)
             elif step == 'detail':
@@ -1666,7 +2606,7 @@ class PartTimeJobBot:
             elif step == 'my_applications':
                 self.handler.show_user_applications(reply_token, user_id)
             elif step == 'menu':
-                self.handler.show_main_menu(reply_token)
+                self.handler.show_main_menu(reply_token, user_id)
     
     def run(self, port: int = 3000, debug: bool = False, use_threading: bool = True):
         """
@@ -1753,7 +2693,7 @@ geocoding_service = GeocodingService(default_api_key=GOOGLE_MAPS_API_KEY)
 create_sample_jobs(job_service)
 
 # 建立 Bot 實例（在模組層級建立，每個進程都需要自己的實例）
-bot = PartTimeJobBot(CHANNEL_ACCESS_TOKEN, channel_secret=CHANNEL_SECRET)
+bot = PartTimeJobBot(CHANNEL_ACCESS_TOKEN, channel_secret=CHANNEL_SECRET, auth_service=auth_service)
 
 # 如果直接執行此檔案，啟動伺服器
 if __name__ == "__main__":
