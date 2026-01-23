@@ -16,6 +16,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # 單個日誌文件最大 10MB
+        max-file: "3"        # 保留最多 3 個日誌文件
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-goodjob} -d ${POSTGRES_DB:-goodjob_db}"]
       interval: 10s
@@ -72,6 +77,11 @@ services:
       - ./data:/app/data
       # 開發模式：取消註解以下行以即時反映程式碼變更
       # - ./part_time_jobs.py:/app/part_time_jobs.py:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"      # 單個日誌文件最大 10MB
+        max-file: "3"        # 保留最多 3 個日誌文件
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8880/docs', timeout=5)"]
       interval: 30s

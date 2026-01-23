@@ -68,7 +68,7 @@ USER appuser
 ENV DEBUG=false
 ENV USE_GUNICORN=true
 ENV GUNICORN_WORKERS=2
-ENV LOG_LEVEL=DEBUG
+ENV LOG_LEVEL=INFO
 
 # 使用 Gunicorn 啟動（通過 Python 模組）
-CMD ["python", "-m", "app.main"]
+CMD ["python", "main.py"]

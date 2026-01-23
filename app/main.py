@@ -6,6 +6,16 @@ Good Jobs 報班系統 - 主入口點
 """
 import os
 import sys
+
+# 確保項目根目錄在 Python 路徑中（用於直接運行此文件時）
+# 獲取當前文件的目錄
+current_file_dir = os.path.dirname(os.path.abspath(__file__))
+# 獲取項目根目錄（app/ 的父目錄）
+project_root = os.path.dirname(current_file_dir)
+# 將項目根目錄添加到 Python 路徑（如果尚未添加）
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import socket
 import threading
 from datetime import date, timedelta

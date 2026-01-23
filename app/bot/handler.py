@@ -1,7 +1,7 @@
 """
 LINE Bot 工作事件處理器
 """
-from typing import Dict, Optional, List, Any
+from typing import Dict, Optional, List, Any, Union
 import urllib.parse
 import datetime
 import requests
@@ -736,10 +736,20 @@ class JobHandler:
 
 現在您可以開始報班工作了！"""
             
-            self.message_service.send_text(reply_token, success_message)
             # 清除註冊報班帳號狀態
             if user_id in registration_states:
                 del registration_states[user_id]
+            
+            # 發送成功訊息和主選單
+            messages: List[Dict[str, Any]] = [
+                {
+                    "type": "text",
+                    "text": success_message
+                },
+                self._build_main_menu_message(user_id)  # 使用輔助方法構建主選單
+            ]
+            
+            self.message_service.send_multiple_messages(reply_token, messages)
             
         except Exception as e:
             logger.error(f"註冊報班帳號失敗：{e}", exc_info=True)
@@ -1128,7 +1138,7 @@ class JobHandler:
         actions = [
             {
                 "type": "postback",
-                "label": "確認取消",
+                "label": "確認註銷",
                 "data": "action=delete_registration&step=confirm_delete"
             },
             {
@@ -1251,8 +1261,8 @@ class JobHandler:
             # 如果發送失敗，至少發送文字訊息
             self.message_service.send_text(reply_token, user_info)
     
-    def show_main_menu(self, reply_token: str, user_id: Optional[str] = None) -> None:
-        """顯示主選單"""
+    def _build_main_menu_message(self, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """構建主選單訊息（不發送）"""
         # 檢查使用者是否已註冊報班帳號
         is_registered = False
         if self.auth_service and user_id:
@@ -1299,10 +1309,24 @@ class JobHandler:
         if not is_registered:
             menu_text = "⚠️ 您尚未註冊報班帳號，請先完成註冊報班帳號才能報班工作。\n\n" + menu_text
         
+        return {
+            "type": "template",
+            "altText": "Good Jobs 報班系統",
+            "template": {
+                "type": "buttons",
+                "title": "Good Jobs 報班系統",
+                "text": menu_text,
+                "actions": actions
+            }
+        }
+    
+    def show_main_menu(self, reply_token: str, user_id: Optional[str] = None) -> None:
+        """顯示主選單"""
+        menu_message = self._build_main_menu_message(user_id)
         self.message_service.send_buttons_template(
             reply_token,
             "Good Jobs 報班系統",
-            menu_text,
-            actions
+            menu_message["template"]["text"],
+            menu_message["template"]["actions"]
         )
 
