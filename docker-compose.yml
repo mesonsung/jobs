@@ -32,6 +32,11 @@ services:
         condition: service_healthy
     env_file:
       - .env.example
+    environment:
+      # Python 設定 - 確保日誌即時輸出，不被緩衝
+      - PYTHONUNBUFFERED=1
+      # 日誌級別設定
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
     ports:
       - "3000:3000"  # LINE Bot (Flask)
       - "8880:8880"  # FastAPI
@@ -62,9 +67,6 @@ services:
     #   - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-goodjob123}
     #   - POSTGRES_DB=${POSTGRES_DB:-goodjob_db}
     #   - DATABASE_URL=postgresql://${POSTGRES_USER:-goodjob}:${POSTGRES_PASSWORD:-goodjob123}@postgres:5432/${POSTGRES_DB:-goodjob_db}
-      
-      # Python 設定
-    #  - PYTHONUNBUFFERED=1
     volumes:
       # 如果需要持久化資料，可以掛載 volume
       - ./data:/app/data

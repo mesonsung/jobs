@@ -6,9 +6,13 @@ import datetime
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.core.logger import setup_logger
 from app.models.job import JobModel
 from app.models.schemas import Job, CreateJobRequest
 from app.services.geocoding_service import GeocodingService
+
+# 設置 logger
+logger = setup_logger(__name__)
 
 
 class JobService:
@@ -91,7 +95,7 @@ class JobService:
                 if coordinates:
                     latitude, longitude = coordinates
                 else:
-                    print(f"⚠️  無法取得工作地點座標：{job_data.location}")
+                    logger.warning(f"無法取得工作地點座標：{job_data.location}")
             
             # 建立資料庫記錄
             job_model = JobModel(

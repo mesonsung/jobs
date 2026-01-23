@@ -10,6 +10,11 @@ import socket
 import threading
 from datetime import date, timedelta
 
+from app.core.logger import setup_logger
+
+# 設置 logger
+logger = setup_logger(__name__)
+
 # 檢查是否能夠正確導入 app 模組
 # 在 Docker 容器中，工作目錄是 /app，這是正常的
 if __name__ == "__main__":
@@ -22,12 +27,11 @@ if __name__ == "__main__":
         current_dir = os.path.basename(os.getcwd())
         if current_dir == "app" and "/app" not in os.getcwd():
             # 在本地開發環境的 app/ 目錄內執行
-            print("❌ 錯誤：請從專案根目錄執行，不要進入 app/ 目錄")
-            print("   正確的執行方式：")
-            print("   cd /home/meson/WorkSpace/Meson/jobs")
-            print("   python3 main.py")
-            print("   或")
-            print("   python3 -m app.main")
+            logger.error("錯誤：請從專案根目錄執行，不要進入 app/ 目錄")
+            logger.info("正確的執行方式：")
+            logger.info("  python3 main.py")
+            logger.info("  或")
+            logger.info("  python3 -m app.main")
             sys.exit(1)
         else:
             # 其他導入錯誤，重新拋出
@@ -36,9 +40,9 @@ if __name__ == "__main__":
 try:
     import uvicorn
 except ImportError:
-    print("❌ 錯誤：未安裝 uvicorn")
-    print("   請執行：pip install uvicorn[standard]")
-    print("   或：pip install -r requirements.txt")
+    logger.error("錯誤：未安裝 uvicorn")
+    logger.info("請執行：pip install uvicorn[standard]")
+    logger.info("或：pip install -r requirements.txt")
     sys.exit(1)
 
 from app.config import (
@@ -49,6 +53,7 @@ from app.config import (
     FASTAPI_PORT
 )
 from app.core.database import init_db
+from app.core.logger import get_uvicorn_log_config
 from app.services.job_service import JobService
 from app.services.application_service import ApplicationService
 from app.services.geocoding_service import GeocodingService
@@ -68,7 +73,7 @@ def create_sample_jobs(job_service: JobService, geocoding_service: GeocodingServ
     try:
         existing_jobs = db.query(JobModel).count()
         if existing_jobs > 0:
-            print("ℹ️  已有工作資料，跳過建立測試資料")
+            logger.info("已有工作資料，跳過建立測試資料")
             return
     finally:
         db.close()
@@ -104,9 +109,9 @@ def create_sample_jobs(job_service: JobService, geocoding_service: GeocodingServ
     for job_data in sample_jobs:
         job_request = CreateJobRequest(**job_data)
         job = job_service_with_geocoding.create_job(job_request)
-        print(f"✅ 已建立測試工作：{job.name} (ID: {job.id})")
+        logger.info(f"已建立測試工作：{job.name} (ID: {job.id})")
     
-    print(f"✅ 共建立 {len(sample_jobs)} 個測試工作")
+    logger.info(f"共建立 {len(sample_jobs)} 個測試工作")
 
 
 def is_port_in_use(port: int, host: str = "0.0.0.0") -> bool:
@@ -124,10 +129,10 @@ def main():
     # 初始化資料庫
     try:
         init_db()
-        print("✅ 資料庫初始化完成")
+        logger.info("資料庫初始化完成")
     except Exception as e:
-        print(f"⚠️  資料庫初始化失敗：{e}")
-        print("⚠️  將繼續使用記憶體儲存（資料不會持久化）")
+        logger.warning(f"資料庫初始化失敗：{e}", exc_info=True)
+        logger.warning("將繼續使用記憶體儲存（資料不會持久化）")
     
     # 初始化服務
     geocoding_service = GeocodingService(api_key=GOOGLE_MAPS_API_KEY)
@@ -153,9 +158,16 @@ def main():
     # 啟動 FastAPI（後台 API）- 只在主進程且 port 未被佔用時啟動
     def run_fastapi():
         try:
-            uvicorn.run(api_app, host="0.0.0.0", port=FASTAPI_PORT)
+            # 使用統一的日誌配置
+            log_config = get_uvicorn_log_config()
+            uvicorn.run(
+                api_app, 
+                host="0.0.0.0", 
+                port=FASTAPI_PORT,
+                log_config=log_config
+            )
         except Exception as e:
-            print(f"⚠️  FastAPI 啟動失敗：{e}")
+            logger.warning(f"FastAPI 啟動失敗：{e}", exc_info=True)
     
     # 啟動 LINE Bot（前台）
     # 在生產環境中，debug 應設為 False，並使用 Gunicorn
@@ -175,13 +187,13 @@ def main():
     if is_main_process and not is_port_in_use(FASTAPI_PORT):
         fastapi_thread = threading.Thread(target=run_fastapi, daemon=True)
         fastapi_thread.start()
-        print(f"✅ FastAPI 伺服器已啟動，監聽 http://0.0.0.0:{FASTAPI_PORT}")
-        print(f"   API 文件：http://localhost:{FASTAPI_PORT}/docs")
+        logger.info(f"FastAPI 伺服器已啟動，監聽 http://0.0.0.0:{FASTAPI_PORT}")
+        logger.info(f"API 文件：http://localhost:{FASTAPI_PORT}/docs")
     elif is_port_in_use(FASTAPI_PORT) and is_main_process:
-        print(f"ℹ️  FastAPI 伺服器已在運行（port {FASTAPI_PORT} 已被佔用）")
+        logger.info(f"FastAPI 伺服器已在運行（port {FASTAPI_PORT} 已被佔用）")
     
     # 在前景執行 LINE Bot
-    print("✅ 啟動 LINE Bot 伺服器...")
+    logger.info("啟動 LINE Bot 伺服器...")
     run_line_bot()
 
 

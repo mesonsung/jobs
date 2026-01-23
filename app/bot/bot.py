@@ -13,7 +13,15 @@ from app.services.job_service import JobService
 from app.services.application_service import ApplicationService
 from app.services.line_message_service import LineMessageService
 from app.services.auth_service import AuthService
-from app.bot.handler import JobHandler
+from app.bot.handler import JobHandler, registration_states, edit_profile_states
+from app.core.logger import setup_logger, setup_gunicorn_logger, DEFAULT_LOG_FORMAT, DEFAULT_DATE_FORMAT
+
+# 在模組導入時就配置好 Gunicorn logger，確保啟動訊息也使用統一格式
+# 這樣當 Gunicorn 啟動時，所有日誌都會使用統一的格式
+setup_gunicorn_logger()
+
+# 設置 logger
+logger = setup_logger(__name__)
 
 # Gunicorn 需要這個變數來獲取 Flask 應用程式
 # 這將在 PartTimeJobBot 初始化時設置
@@ -61,14 +69,15 @@ class PartTimeJobBot:
         self.flask_app = Flask(__name__)
         self._setup_routes()
         
-        # 註冊 Flask 應用程式實例供 Gunicorn 使用
+        # 註冊報班帳號 Flask 應用程式實例供 Gunicorn 使用
         global flask_app
         flask_app = self.flask_app
     
     def _setup_routes(self):
         """設定路由"""
-        @self.flask_app.route("/", methods=['POST'])
-        def webhook():
+        @self.flask_app.route("/webhook", methods=['POST'])
+        def webhook():  # noqa: F841
+            """LINE Webhook 處理函數（由 Flask 框架自動調用）"""
             return self.handle_webhook()
     
     def _verify_signature(self, body: bytes, signature: str) -> bool:
@@ -84,7 +93,7 @@ class PartTimeJobBot:
         """
         if not self.channel_secret:
             # 如果沒有設定 channel_secret，跳過驗證（開發模式）
-            print("⚠️  警告：未設定 Channel Secret，跳過簽名驗證")
+            logger.warning("未設定 Channel Secret，跳過簽名驗證")
             return True
         
         try:
@@ -101,7 +110,7 @@ class PartTimeJobBot:
             # 比較簽名（使用安全比較避免時間攻擊）
             return hmac.compare_digest(expected_signature, signature)
         except Exception as e:
-            print(f"❌ 簽名驗證錯誤：{e}")
+            logger.error(f"簽名驗證錯誤：{e}", exc_info=True)
             return False
     
     def handle_webhook(self):
@@ -112,15 +121,14 @@ class PartTimeJobBot:
             body = request.get_data()
             
             if not self._verify_signature(body, signature):
-                print(f"❌ Webhook 簽名驗證失敗")
-                print(f"   收到的簽名：{signature[:20]}...")
+                logger.warning(f"Webhook 簽名驗證失敗，收到的簽名：{signature[:20]}...")
                 return 'Forbidden', 403
             
             # 解析 JSON 資料
             data = request.get_json()
             
-            # 印出接收到的資料（方便除錯）
-            print(json.dumps(data, indent=2, ensure_ascii=False))
+            # 記錄接收到的資料（DEBUG 級別）
+            #logger.debug(f"收到 Webhook 資料：{json.dumps(data, indent=2, ensure_ascii=False)}")
             
             # 處理不同類型的事件
             for event in data.get('events', []):
@@ -134,9 +142,8 @@ class PartTimeJobBot:
                     elif event_type == 'postback':
                         self._handle_postback(event, reply_token, user_id)
                 except Exception as e:
-                    print(f"❌ 處理事件時發生錯誤：{e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.error(f"處理事件時發生錯誤：{e}", exc_info=True)
+                    logger.debug(f"事件資料：{json.dumps(data, indent=2, ensure_ascii=False)}")
                     # 嘗試發送錯誤訊息給使用者
                     try:
                         if reply_token:
@@ -149,48 +156,32 @@ class PartTimeJobBot:
             
             return 'OK', 200
         except Exception as e:
-            print(f"❌ Webhook 處理錯誤：{e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Webhook 處理錯誤：{e}", exc_info=True)
             return 'OK', 200  # 即使出錯也返回 OK，避免 LINE 重試
     
     def _handle_message(self, event: Dict, reply_token: str, user_id: str) -> None:
         """處理文字訊息"""
         message_text = event['message'].get('text', '')
         
-        # 檢查是否在註冊流程中
-        if user_id in self.handler.registration_states:
-            # 如果輸入的是 menu 相關指令，先清除註冊狀態，然後顯示主選單
-            if message_text.strip().lower() in ['選單', 'menu', 'menus', 'Menu', 'MENU', '工作', 'jobs']:
-                # 清除註冊狀態
-                if user_id in self.handler.registration_states:
-                    del self.handler.registration_states[user_id]
-                self.handler.show_main_menu(reply_token, user_id)
-                return
-            # 其他情況正常處理註冊輸入
+        logger.debug(f"_handle_message: 收到文字訊息：{message_text} (user_id: {user_id})")
+        # 檢查是否在註冊報班帳號流程中
+        logger.debug(f"_handle_message: registration_states: {registration_states} (user_id: {user_id})")
+        if user_id in registration_states:
             self.handler.handle_register_input(reply_token, user_id, message_text)
             return
         
         # 檢查是否在修改資料流程中
-        if user_id in self.handler.edit_profile_states:
-            # 如果輸入的是 menu 相關指令，先清除修改狀態，然後顯示主選單
-            if message_text.strip().lower() in ['選單', 'menu', 'menus', 'Menu', 'MENU', '工作', 'jobs']:
-                # 清除修改狀態
-                if user_id in self.handler.edit_profile_states:
-                    del self.handler.edit_profile_states[user_id]
-                self.handler.show_main_menu(reply_token, user_id)
-                return
-            # 其他情況正常處理修改輸入
+        if user_id in edit_profile_states:
             self.handler.handle_edit_profile_input(reply_token, user_id, message_text)
             return
         
-        if message_text in ['選單', 'menu', 'Menu', 'MENU', '工作', 'jobs']:
+        if message_text.strip().lower() in ['選單', 'menu', 'menus']:
             self.handler.show_main_menu(reply_token, user_id)
-        elif message_text in ['工作列表', '查看工作', 'list']:
+        elif message_text.strip().lower() in ['工作列表', '工作', 'jobs', 'list']:
             self.handler.show_available_jobs(reply_token, user_id)
-        elif message_text in ['已報班', '我的報班', '報班記錄', 'my_applications']:
+        elif message_text.strip().lower() in ['已報班', '我的報班', '報班記錄', 'applications']:
             self.handler.show_user_applications(reply_token, user_id)
-        elif message_text in ['註冊', 'register', 'Register', 'REGISTER']:
+        elif message_text.strip().lower() in ['註冊報班帳號', 'register']:
             self.handler.handle_register(reply_token, user_id)
         else:
             # 預設顯示主選單
@@ -199,7 +190,7 @@ class PartTimeJobBot:
     def _handle_postback(self, event: Dict, reply_token: str, user_id: str) -> None:
         """處理 postback 事件"""
         postback_data = event['postback'].get('data', '')
-        print(f"收到 postback: {postback_data}")
+        logger.debug(f"_handle_postback: 收到 postback: {postback_data} (user_id: {user_id})")
         
         # 解析 postback data
         parsed_data = urllib.parse.parse_qs(postback_data)
@@ -223,7 +214,7 @@ class PartTimeJobBot:
                 field = parsed_data.get('field', [''])[0]
                 if field:
                     # 設定修改狀態並提示輸入
-                    self.handler.edit_profile_states[user_id] = {'field': field}
+                    edit_profile_states[user_id] = {'field': field}
                     user = self.handler.auth_service.get_user_by_line_id(user_id) if self.handler.auth_service else None
                     
                     if field == 'phone':
@@ -270,7 +261,7 @@ class PartTimeJobBot:
             elif step == 'menu':
                 self.handler.show_main_menu(reply_token, user_id)
     
-    def run(self, port: int = 3000, debug: bool = False, use_threading: bool = True, use_gunicorn: bool = None):
+    def run(self, port: int = 3000, debug: bool = False, use_threading: bool = True, use_gunicorn: Optional[bool] = None):
         """
         啟動伺服器
         
@@ -296,41 +287,73 @@ class PartTimeJobBot:
                 import gunicorn.app.wsgiapp as wsgi
                 import sys
                 
-                # 確保 Flask 應用程式已註冊
+                # 確保 Flask 應用程式已註冊報班帳號
                 global flask_app
                 flask_app = self.flask_app
                 
+                # 配置 Gunicorn logger 使用統一的日誌格式
+                setup_gunicorn_logger()
+                
                 # 設置 Gunicorn 參數
                 workers = os.getenv("GUNICORN_WORKERS", "2")
-                log_level = os.getenv("LOG_LEVEL", "info")
+                # Gunicorn 使用小寫的日誌級別，需要轉換
+                app_log_level = os.getenv("LOG_LEVEL", "DEBUG").upper()
+                gunicorn_log_level_map = {
+                    "DEBUG": "debug",
+                    "INFO": "info",
+                    "WARNING": "warning",
+                    "ERROR": "error",
+                    "CRITICAL": "critical"
+                }
+                log_level = gunicorn_log_level_map.get(app_log_level, "info")
+                
+                # 統一的 access log 格式
+                # 從格式中移除 %(t)s（Gunicorn 的默認時間戳 [23/Jan/2026:03:08:36 +0000]）
+                # 當不設置 --access-logfile 時，access log 會通過 gunicorn.access logger
+                # 由 logging formatter 添加統一的時間戳格式：%Y-%m-%d %H:%M:%S
+                # 格式：狀態碼 方法 路徑 查詢字符串 - 響應時間(微秒)
+                # 實際輸出會是：2026-01-23 11:00:00 - gunicorn.access - INFO - 200 POST /webhook - 157237μs
+                # 注意：響應時間 %(D)s 是微秒，要轉換為毫秒需要除以 1000，但格式不支持計算
+                access_log_format = '%(s)s %(m)s %(U)s%(q)s - %(D)sμs'
                 
                 # Gunicorn 需要直接引用 Flask 應用程式實例
                 # 使用模組級變數 flask_app
+                # 使用配置檔案以確保 on_starting hook 被調用
+                import os as os_module
+                config_path = os_module.path.join(
+                    os_module.path.dirname(os_module.path.dirname(os_module.path.dirname(__file__))),
+                    "gunicorn_config.py"
+                )
                 sys.argv = [
                     "gunicorn",
+                    "--config", config_path,
                     "--bind", f"0.0.0.0:{port}",
                     "--workers", str(workers),
                     "--worker-class", "sync",
                     "--timeout", "120",
-                    "--access-logfile", "-",
                     "--error-logfile", "-",
+                    "--access-logformat", access_log_format,
                     "--log-level", log_level,
                     "--preload",
                     "app.bot.bot:flask_app"
                 ]
                 
-                print(f"✅ 使用 Gunicorn 啟動 LINE Bot 伺服器")
-                print(f"   監聽地址：0.0.0.0:{port}")
-                print(f"   Workers：{workers}")
-                print(f"   日誌級別：{log_level}")
+                # 注意：我們移除了 --access-logfile "-"
+                # 這樣 access log 會通過 Python logging 系統（gunicorn.access logger）
+                # setup_gunicorn_logger() 已經配置了 gunicorn.access logger 使用統一的格式
+                # 如果不設置 --access-logfile，Gunicorn 會使用默認的 logging 系統輸出 access log
+                
+                logger.info(f"使用 Gunicorn 啟動 LINE Bot 伺服器")
+                logger.info(f"監聽地址：0.0.0.0:{port}")
+                logger.info(f"Workers：{workers}")
+                logger.info(f"日誌級別：{log_level}")
                 wsgi.run()
             except ImportError:
-                print("⚠️  Gunicorn 未安裝，回退到 Flask 開發伺服器")
-                print("   安裝方式：pip install gunicorn")
+                logger.warning("Gunicorn 未安裝，回退到 Flask 開發伺服器")
+                logger.info("安裝方式：pip install gunicorn")
                 use_gunicorn = False
             except Exception as e:
-                print(f"⚠️  Gunicorn 啟動失敗：{e}")
-                print("   回退到 Flask 開發伺服器")
+                logger.warning(f"Gunicorn 啟動失敗：{e}，回退到 Flask 開發伺服器", exc_info=True)
                 use_gunicorn = False
         
         # 如果不使用 Gunicorn（開發模式）
@@ -349,10 +372,9 @@ class PartTimeJobBot:
                 
                 thread = threading.Thread(target=run_server, daemon=True)
                 thread.start()
-                print(f"✅ LINE Bot 伺服器已在背景啟動，監聽 0.0.0.0:{port}")
-                print("⚠️  注意：在 Jupyter 中，伺服器會在背景執行")
-                print("   要停止伺服器，請重新啟動 kernel")
+                logger.info(f"LINE Bot 伺服器已在背景啟動，監聽 0.0.0.0:{port}")
+                logger.warning("注意：在 Jupyter 中，伺服器會在背景執行，要停止伺服器請重新啟動 kernel")
             else:
                 self.flask_app.run(host='0.0.0.0', port=port, debug=debug)
-                print(f"✅ LINE Bot 伺服器已啟動，監聽 0.0.0.0:{port}")
+                logger.info(f"LINE Bot 伺服器已啟動，監聽 0.0.0.0:{port}")
 

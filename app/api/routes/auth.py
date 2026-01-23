@@ -19,14 +19,14 @@ def register(
     user_data: UserCreate,
     auth_service: Annotated[AuthService, Depends(get_auth_service)]
 ):
-    """註冊新使用者"""
+    """註冊報班帳號新使用者"""
     try:
         user = auth_service.create_user(user_data)
         return user
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"註冊失敗：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"註冊報班帳號失敗：{str(e)}")
 
 
 @router.post("/login", response_model=Token)

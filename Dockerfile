@@ -49,6 +49,7 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
 COPY app/ ./app/
 COPY part_time_jobs.py .
 COPY main.py .
+COPY gunicorn_config.py .
 
 # 設定檔案所有權
 RUN chown -R appuser:appuser /app /home/appuser/.local
@@ -67,7 +68,7 @@ USER appuser
 ENV DEBUG=false
 ENV USE_GUNICORN=true
 ENV GUNICORN_WORKERS=2
-ENV LOG_LEVEL=info
+ENV LOG_LEVEL=DEBUG
 
 # 使用 Gunicorn 啟動（通過 Python 模組）
 CMD ["python", "-m", "app.main"]

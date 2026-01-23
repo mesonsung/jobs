@@ -4,6 +4,11 @@ LINE 訊息發送服務
 from typing import List, Dict
 import requests
 
+from app.core.logger import setup_logger
+
+# 設置 logger
+logger = setup_logger(__name__)
+
 
 class LineMessageService:
     """LINE 訊息發送服務"""
@@ -67,9 +72,9 @@ class LineMessageService:
             response.raise_for_status()  # 如果狀態碼不是 2xx，會拋出異常
             return response
         except requests.exceptions.RequestException as e:
-            print(f"❌ LINE API 錯誤：{e}")
+            logger.error(f"LINE API 錯誤：{e}")
             if hasattr(e, 'response') and e.response is not None:
-                print(f"   回應內容：{e.response.text}")
+                logger.debug(f"回應內容：{e.response.text}")
             raise
     
     def send_buttons_template(self, reply_token: str, title: str, text: str, actions: List[Dict]) -> requests.Response:

@@ -10,10 +10,14 @@ from fastapi import HTTPException, status
 from jose import JWTError, jwt
 
 from app.core.database import SessionLocal
+from app.core.logger import setup_logger
 from app.core.security import get_password_hash, verify_password, create_access_token, decode_access_token
 from app.models.user import UserModel
 from app.models.schemas import User, UserInDB, UserCreate, TokenData
 from app.config import JWT_SECRET_KEY, JWT_ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, ADMIN_USERNAME, ADMIN_PASSWORD
+
+# 設置 logger
+logger = setup_logger(__name__)
 
 
 class AuthService:
@@ -45,7 +49,7 @@ class AuthService:
             # bcrypt 限制密碼不能超過 72 字節，如果超過則截斷
             if len(default_admin_password.encode('utf-8')) > 72:
                 default_admin_password = default_admin_password[:72]
-                print(f"⚠️  管理員密碼超過 72 字節，已自動截斷")
+                logger.warning("管理員密碼超過 72 字節，已自動截斷")
             
             # 檢查是否已存在
             existing_user = db.query(UserModel).filter(UserModel.username == default_admin_username).first()
@@ -61,10 +65,10 @@ class AuthService:
                 )
                 db.add(admin_user)
                 db.commit()
-                print(f"✅ 已建立預設管理員帳號：{default_admin_username}")
+                logger.info(f"已建立預設管理員帳號：{default_admin_username}")
         except Exception as e:
             db.rollback()
-            print(f"⚠️  建立預設管理員帳號失敗：{e}")
+            logger.warning(f"建立預設管理員帳號失敗：{e}", exc_info=True)
         finally:
             if not self.db:
                 db.close()
@@ -174,7 +178,7 @@ class AuthService:
             # 使用 LINE User ID 作為使用者名稱（key）
             username = line_user_id
             
-            # 檢查是否已註冊（直接使用 LINE User ID 作為 key）
+            # 檢查是否已註冊報班帳號（直接使用 LINE User ID 作為 key）
             user_model = db.query(UserModel).filter(UserModel.username == username).first()
             
             if user_model:
@@ -212,7 +216,7 @@ class AuthService:
                 db.commit()
                 db.refresh(user_model)
             
-            print(f"✅ 已建立 LINE 使用者：{username} (LINE User ID: {line_user_id})")
+            logger.info(f"已建立 LINE 使用者：{username} (LINE User ID: {line_user_id})")
             
             # 返回使用者（不包含密碼）
             return User(
@@ -357,7 +361,7 @@ class AuthService:
                 db.close()
     
     def is_line_user_registered(self, line_user_id: str, db: Optional[Session] = None) -> bool:
-        """檢查 LINE 使用者是否已註冊"""
+        """檢查 LINE 使用者是否已註冊報班帳號"""
         if db is None:
             db = self._get_db()
             should_close = True
@@ -374,7 +378,7 @@ class AuthService:
     
     def delete_line_user(self, line_user_id: str, db: Optional[Session] = None) -> bool:
         """
-        取消 LINE 使用者註冊
+        取消 LINE 使用者註冊報班帳號
         
         參數:
             line_user_id: LINE User ID
@@ -400,7 +404,7 @@ class AuthService:
             db.delete(user_model)
             db.commit()
             
-            print(f"✅ 已取消 LINE 使用者註冊：{username} (LINE User ID: {line_user_id})")
+            logger.info(f"已取消 LINE 使用者註冊報班帳號：{username} (LINE User ID: {line_user_id})")
             return True
         except Exception as e:
             db.rollback()

@@ -943,7 +943,7 @@ class AuthService:
             # 使用 LINE User ID 作為使用者名稱（key）
             username = line_user_id
             
-            # 檢查是否已註冊（直接使用 LINE User ID 作為 key）
+            # 檢查是否已註冊報班帳號（直接使用 LINE User ID 作為 key）
             user_model = db.query(UserModel).filter(UserModel.username == username).first()
             
             if user_model:
@@ -1065,7 +1065,7 @@ class AuthService:
                 db.close()
     
     def is_line_user_registered(self, line_user_id: str, db: Optional[Session] = None) -> bool:
-        """檢查 LINE 使用者是否已註冊"""
+        """檢查 LINE 使用者是否已註冊報班帳號"""
         if db is None:
             db = self._get_db()
             should_close = True
@@ -1082,7 +1082,7 @@ class AuthService:
     
     def delete_line_user(self, line_user_id: str, db: Optional[Session] = None) -> bool:
         """
-        取消 LINE 使用者註冊
+        取消 LINE 使用者註冊報班帳號
         
         參數:
             line_user_id: LINE User ID
@@ -1108,7 +1108,7 @@ class AuthService:
             db.delete(user_model)
             db.commit()
             
-            print(f"✅ 已取消 LINE 使用者註冊：{username} (LINE User ID: {line_user_id})")
+            print(f"✅ 已取消 LINE 使用者註冊報班帳號：{username} (LINE User ID: {line_user_id})")
             return True
         except Exception as e:
             db.rollback()
@@ -1291,7 +1291,7 @@ class JobHandler:
         self.application_service = application_service
         self.message_service = message_service
         self.auth_service = auth_service
-        # 註冊狀態管理：{user_id: {'step': step, 'data': {...}}}
+        # 註冊報班帳號狀態管理：{user_id: {'step': step, 'data': {...}}}
         self.registration_states: Dict[str, Dict] = {}
         # 修改資料狀態管理：{user_id: {'step': step, 'field': field_name}}
         self.edit_profile_states: Dict[str, Dict] = {}
@@ -1337,7 +1337,7 @@ class JobHandler:
             encoded_location = urllib.parse.quote(job.location)
             navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
             
-            # 檢查使用者是否已註冊
+            # 檢查使用者是否已註冊報班帳號
             is_registered = True
             if self.auth_service:
                 is_registered = self.auth_service.is_line_user_registered(user_id) if user_id else False
@@ -1351,11 +1351,11 @@ class JobHandler:
                 }
             ]
             
-            # 如果未註冊，加入註冊按鈕
+            # 如果未註冊報班帳號，加入註冊報班帳號按鈕
             if not is_registered:
                 actions.append({
                     "type": "postback",
-                    "label": "📝 註冊",
+                    "label": "📝 註冊報班帳號",
                     "data": "action=register&step=register"
                 })
             # 根據報班狀態加入不同按鈕
@@ -1460,7 +1460,7 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 找不到指定的工作。")
             return
         
-        # 檢查使用者是否已註冊
+        # 檢查使用者是否已註冊報班帳號
         is_registered = True
         if self.auth_service:
             is_registered = self.auth_service.is_line_user_registered(user_id)
@@ -1492,10 +1492,10 @@ class JobHandler:
         # 建立按鈕
         actions = []
         if not is_registered:
-            # 未註冊使用者：顯示註冊按鈕
+            # 未註冊報班帳號使用者：顯示註冊報班帳號按鈕
             actions.append({
                 "type": "postback",
-                "label": "📝 註冊",
+                "label": "📝 註冊報班帳號",
                 "data": "action=register&step=register"
             })
         elif is_applied:
@@ -1554,11 +1554,11 @@ class JobHandler:
     
     def handle_apply_job(self, reply_token: str, user_id: str, job_id: str) -> None:
         """處理報班工作流程 - 顯示班別選擇"""
-        # 檢查使用者是否已註冊
+        # 檢查使用者是否已註冊報班帳號
         if self.auth_service and not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無法報班工作。\n\n請先使用「註冊」功能完成註冊。"
+                "❌ 您尚未註冊報班帳號，無法報班工作。\n\n請先使用「註冊報班帳號」功能完成註冊報班帳號。"
             )
             return
         
@@ -1606,11 +1606,11 @@ class JobHandler:
     
     def handle_select_shift(self, reply_token: str, user_id: str, job_id: str, shift: str) -> None:
         """處理選擇班別並完成報班"""
-        # 檢查使用者是否已註冊
+        # 檢查使用者是否已註冊報班帳號
         if self.auth_service and not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無法報班工作。\n\n請先使用「註冊」功能完成註冊。"
+                "❌ 您尚未註冊報班帳號，無法報班工作。\n\n請先使用「註冊報班帳號」功能完成註冊報班帳號。"
             )
             return
         
@@ -1800,7 +1800,7 @@ class JobHandler:
             encoded_location = urllib.parse.quote(job.location)
             navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
             
-            # 檢查使用者是否已註冊
+            # 檢查使用者是否已註冊報班帳號
             is_registered = True
             if self.auth_service:
                 is_registered = self.auth_service.is_line_user_registered(user_id)
@@ -1830,7 +1830,7 @@ class JobHandler:
             else:
                 actions.append({
                     "type": "postback",
-                    "label": "📝 註冊",
+                    "label": "📝 註冊報班帳號",
                     "data": "action=register&step=register"
                 })
             
@@ -1878,27 +1878,27 @@ class JobHandler:
         self.message_service.send_multiple_messages(reply_token, messages)
     
     def handle_register(self, reply_token: str, user_id: str) -> None:
-        """處理 LINE 使用者註冊 - 開始註冊流程"""
+        """處理 LINE 使用者註冊報班帳號 - 開始註冊報班帳號流程"""
         if not self.auth_service:
-            self.message_service.send_text(reply_token, "❌ 註冊功能暫時無法使用。")
+            self.message_service.send_text(reply_token, "❌ 註冊報班帳號功能暫時無法使用。")
             return
         
-        # 檢查是否已註冊
+        # 檢查是否已註冊報班帳號
         if self.auth_service.is_line_user_registered(user_id):
             user = self.auth_service.get_user_by_line_id(user_id)
             if user:
-                user_info = f"""✅ 您已經註冊過了！
+                user_info = f"""✅ 您已經註冊報班帳號過了！
 
 📋 您的帳號資訊：
 • 姓名：{user.full_name or '未填寫'}
 • 手機：{user.phone or '未填寫'}
 • 地址：{user.address or '未填寫'}
 • Email：{user.email or '未填寫'}
-• 註冊時間：{user.created_at}"""
+• 註冊報班帳號時間：{user.created_at}"""
                 self.message_service.send_text(reply_token, user_info)
             return
         
-        # 開始註冊流程 - 第一步：輸入姓名
+        # 開始註冊報班帳號流程 - 第一步：輸入姓名
         self.registration_states[user_id] = {
             'step': 'name',
             'data': {}
@@ -1906,24 +1906,24 @@ class JobHandler:
         
         self.message_service.send_text(
             reply_token,
-            "📝 歡迎註冊！請依序填寫以下資料：\n\n第一步：請輸入您的姓名"
+            "📝 歡迎註冊報班帳號！請依序填寫以下資料：\n\n第一步：請輸入您的姓名"
         )
     
     def handle_register_input(self, reply_token: str, user_id: str, text: str) -> None:
-        """處理註冊資料輸入"""
+        """處理報班帳號資料輸入"""
         if not self.auth_service:
             return
         
-        # 檢查是否在註冊流程中
+        # 檢查是否在註冊報班帳號流程中
         if user_id not in self.registration_states:
             return
         
-        # 檢查是否要取消註冊
-        if text.strip().lower() in ['取消', 'cancel', '取消註冊']:
+        # 檢查是否要註銷報班帳號
+        if text.strip().lower() in ['取消', 'cancel', '註銷報班帳號']:
             del self.registration_states[user_id]
             self.message_service.send_text(
                 reply_token,
-                "❌ 已取消註冊流程。\n\n如需註冊，請重新發送「註冊」。"
+                "❌ 已註銷報班帳號流程。\n\n如需註冊報班帳號，請重新發送「註冊報班帳號」。"
             )
             return
         
@@ -1996,7 +1996,7 @@ class JobHandler:
                     return
                 data['email'] = email
             
-            # 完成註冊
+            # 完成註冊報班帳號
             try:
                 # 取得並驗證必填欄位
                 full_name = data.get('full_name', '').strip()
@@ -2010,7 +2010,7 @@ class JobHandler:
                 if not full_name:
                     self.message_service.send_text(
                         reply_token,
-                        "❌ 姓名為必填欄位，請重新開始註冊流程。"
+                        "❌ 姓名為必填欄位，請重新開始註冊報班帳號流程。"
                     )
                     if user_id in self.registration_states:
                         del self.registration_states[user_id]
@@ -2019,7 +2019,7 @@ class JobHandler:
                 if not phone:
                     self.message_service.send_text(
                         reply_token,
-                        "❌ 手機號碼為必填欄位，請重新開始註冊流程。"
+                        "❌ 手機號碼為必填欄位，請重新開始註冊報班帳號流程。"
                     )
                     if user_id in self.registration_states:
                         del self.registration_states[user_id]
@@ -2028,7 +2028,7 @@ class JobHandler:
                 if not address:
                     self.message_service.send_text(
                         reply_token,
-                        "❌ 地址為必填欄位，請重新開始註冊流程。"
+                        "❌ 地址為必填欄位，請重新開始註冊報班帳號流程。"
                     )
                     if user_id in self.registration_states:
                         del self.registration_states[user_id]
@@ -2043,23 +2043,23 @@ class JobHandler:
                     email=email
                 )
                 
-                # 清除註冊狀態
+                # 清除註冊報班帳號狀態
                 del self.registration_states[user_id]
                 
-                success_message = f"""✅ 註冊成功！
+                success_message = f"""✅ 註冊報班帳號成功！
 
-📋 您的註冊資訊：
+📋 您的註冊報班帳號資訊：
 • 姓名：{user.full_name}
 • 手機：{user.phone}
 • 地址：{user.address}
 • Email：{user.email or '未填寫'}
-• 註冊時間：{user.created_at}
+• 註冊報班帳號時間：{user.created_at}
 
 現在您可以開始報班工作了！"""
                 
                 # 使用 send_multiple_messages 在同一個回覆中發送成功訊息和主選單
                 # 先準備主選單的內容（與 show_main_menu 一致）
-                is_registered = True  # 剛註冊完成，一定是已註冊狀態
+                is_registered = True  # 剛註冊報班帳號完成，一定是已註冊報班帳號狀態
                 actions = []
                 
                 actions.extend([
@@ -2075,11 +2075,11 @@ class JobHandler:
                     }
                 ])
                 
-                # 已註冊使用者：顯示查看註冊資料選項
+                # 已註冊報班帳號使用者：顯示查看報班帳號資料選項
                 if is_registered:
                     actions.append({
                         "type": "postback",
-                        "label": "👤 查看註冊資料",
+                        "label": "👤 查看報班帳號資料",
                         "data": "action=view_profile&step=view"
                     })
                 
@@ -2110,28 +2110,28 @@ class JobHandler:
                 
                 self.message_service.send_multiple_messages(reply_token, messages)
             except Exception as e:
-                print(f"❌ 註冊失敗：{e}")
+                print(f"❌ 註冊報班帳號失敗：{e}")
                 import traceback
                 traceback.print_exc()
-                # 清除註冊狀態
+                # 清除註冊報班帳號狀態
                 if user_id in self.registration_states:
                     del self.registration_states[user_id]
                 self.message_service.send_text(
                     reply_token,
-                    f"❌ 註冊失敗：{str(e)}\n\n請稍後再試或聯絡客服。"
+                    f"❌ 註冊報班帳號失敗：{str(e)}\n\n請稍後再試或聯絡客服。"
                 )
     
     def handle_edit_profile(self, reply_token: str, user_id: str) -> None:
-        """處理修改註冊資料 - 選擇要修改的欄位"""
+        """處理修改報班帳號資料 - 選擇要修改的欄位"""
         if not self.auth_service:
-            self.message_service.send_text(reply_token, "❌ 修改註冊資料功能暫時無法使用。")
+            self.message_service.send_text(reply_token, "❌ 修改報班帳號資料功能暫時無法使用。")
             return
         
-        # 檢查是否已註冊
+        # 檢查是否已註冊報班帳號
         if not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無法修改註冊資料。\n\n請先使用「註冊」功能完成註冊。"
+                "❌ 您尚未註冊報班帳號，無法修改報班帳號資料。\n\n請先使用「註冊報班帳號」功能完成註冊報班帳號。"
             )
             return
         
@@ -2167,18 +2167,18 @@ class JobHandler:
         
         # LINE 按鈕範本 text 欄位限制 60 字元，需要簡化顯示
         # 使用最簡潔的版本，只顯示關鍵提示
-        current_info = "📋修改註冊資料\n\n請選擇要修改的欄位："
+        current_info = "📋修改報班帳號資料\n\n請選擇要修改的欄位："
         
         try:
             response = self.message_service.send_buttons_template(
                 reply_token,
-                "修改註冊資料",
+                "修改報班帳號資料",
                 current_info,
                 actions
             )
             response.raise_for_status()  # 檢查 HTTP 狀態碼
         except requests.exceptions.RequestException as e:
-            print(f"❌ 發送修改註冊資料選單失敗: {e}")
+            print(f"❌ 發送修改報班帳號資料選單失敗: {e}")
             if hasattr(e, 'response') and e.response is not None:
                 print(f"   回應內容：{e.response.text}")
             # 嘗試發送文字訊息作為備用
@@ -2189,11 +2189,11 @@ class JobHandler:
 • 地址：{user.address or '未填寫'}
 • Email：{user.email or '未填寫'}
 
-請點擊主選單中的「修改註冊資料」來修改資料。"""
+請點擊主選單中的「修改報班帳號資料」來修改資料。"""
             self.message_service.send_text(reply_token, backup_message)
     
     def handle_edit_profile_input(self, reply_token: str, user_id: str, text: str) -> None:
-        """處理修改註冊資料輸入"""
+        """處理修改報班帳號資料輸入"""
         if not self.auth_service:
             return
         
@@ -2237,7 +2237,7 @@ class JobHandler:
                 # 清除修改狀態
                 del self.edit_profile_states[user_id]
                 
-                # 發送成功訊息並返回查看註冊資料頁面
+                # 發送成功訊息並返回查看報班帳號資料頁面
                 success_message = f"✅ 手機號碼已更新為：{phone}"
                 self._send_update_success_and_show_profile(reply_token, user_id, success_message)
             else:
@@ -2268,7 +2268,7 @@ class JobHandler:
                 # 清除修改狀態
                 del self.edit_profile_states[user_id]
                 
-                # 發送成功訊息並返回查看註冊資料頁面
+                # 發送成功訊息並返回查看報班帳號資料頁面
                 success_message = f"✅ 地址已更新為：{address}"
                 self._send_update_success_and_show_profile(reply_token, user_id, success_message)
             else:
@@ -2303,7 +2303,7 @@ class JobHandler:
                 # 清除修改狀態
                 del self.edit_profile_states[user_id]
                 
-                # 發送成功訊息並返回查看註冊資料頁面
+                # 發送成功訊息並返回查看報班帳號資料頁面
                 if email:
                     success_message = f"✅ Email 已更新為：{email}"
                 else:
@@ -2314,7 +2314,7 @@ class JobHandler:
                 self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
     
     def _send_update_success_and_show_profile(self, reply_token: str, user_id: str, success_message: str) -> None:
-        """發送更新成功訊息並顯示註冊資料頁面"""
+        """發送更新成功訊息並顯示報班帳號資料頁面"""
         # 取得更新後的使用者資料
         user = self.auth_service.get_user_by_line_id(user_id) if self.auth_service else None
         if not user:
@@ -2322,14 +2322,14 @@ class JobHandler:
             self.message_service.send_text(reply_token, success_message)
             return
         
-        # 顯示更新後的註冊資料
-        user_info = f"""📋 您的註冊資料：
+        # 顯示更新後的報班帳號資料
+        user_info = f"""📋 您的報班帳號資料：
 
 • 姓名：{user.full_name or '未填寫'}
 • 手機：{user.phone or '未填寫'}
 • 地址：{user.address or '未填寫'}
 • Email：{user.email or '未填寫'}
-• 註冊時間：{user.created_at}"""
+• 註冊報班帳號時間：{user.created_at}"""
         
         # 準備操作按鈕
         actions = [
@@ -2340,7 +2340,7 @@ class JobHandler:
             },
             {
                 "type": "postback",
-                "label": "🗑️ 取消註冊",
+                "label": "🗑️ 註銷報班帳號",
                 "data": "action=delete_registration&step=confirm"
             },
             {
@@ -2362,10 +2362,10 @@ class JobHandler:
             },
             {
                 "type": "template",
-                "altText": "註冊資料操作",
+                "altText": "報班帳號資料操作",
                 "template": {
                     "type": "buttons",
-                    "title": "註冊資料",
+                    "title": "報班帳號資料",
                     "text": "請選擇操作：",
                     "actions": actions
                 }
@@ -2375,21 +2375,21 @@ class JobHandler:
         try:
             self.message_service.send_multiple_messages(reply_token, messages)
         except Exception as e:
-            print(f"❌ 發送更新成功訊息和註冊資料失敗: {e}")
+            print(f"❌ 發送更新成功訊息和報班帳號資料失敗: {e}")
             # 如果發送失敗，至少發送成功訊息
             self.message_service.send_text(reply_token, success_message)
     
     def handle_delete_registration(self, reply_token: str, user_id: str) -> None:
-        """處理取消註冊 - 顯示確認訊息"""
+        """處理註銷報班帳號 - 顯示確認訊息"""
         if not self.auth_service:
-            self.message_service.send_text(reply_token, "❌ 取消註冊功能暫時無法使用。")
+            self.message_service.send_text(reply_token, "❌ 註銷報班帳號功能暫時無法使用。")
             return
         
-        # 檢查是否已註冊
+        # 檢查是否已註冊報班帳號
         if not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無需取消。"
+                "❌ 您尚未註冊報班帳號，無需取消。"
             )
             return
         
@@ -2401,7 +2401,7 @@ class JobHandler:
         
         # 顯示確認訊息（LINE 按鈕範本 text 限制 60 字元）
         # 使用簡潔版本
-        confirm_text = "⚠️ 確認取消註冊\n\n取消後將無法報班工作，且無法復原。\n\n確定要取消嗎？"
+        confirm_text = "⚠️ 確認註銷報班帳號\n\n取消後將無法報班工作，且無法復原。\n\n確定要取消嗎？"
         
         actions = [
             {
@@ -2418,26 +2418,26 @@ class JobHandler:
         
         self.message_service.send_buttons_template(
             reply_token,
-            "取消註冊",
+            "註銷報班帳號",
             confirm_text,
             actions
         )
     
     def handle_confirm_delete_registration(self, reply_token: str, user_id: str) -> None:
-        """處理確認取消註冊"""
+        """處理確認註銷報班帳號"""
         if not self.auth_service:
-            self.message_service.send_text(reply_token, "❌ 取消註冊功能暫時無法使用。")
+            self.message_service.send_text(reply_token, "❌ 註銷報班帳號功能暫時無法使用。")
             return
         
-        # 檢查是否已註冊
+        # 檢查是否已註冊報班帳號
         if not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無需取消。"
+                "❌ 您尚未註冊報班帳號，無需取消。"
             )
             return
         
-        # 取消使用者註冊
+        # 取消使用者註冊報班帳號
         success = self.auth_service.delete_line_user(user_id)
         
         if success:
@@ -2448,25 +2448,25 @@ class JobHandler:
             
             self.message_service.send_text(
                 reply_token,
-                "✅ 您的註冊已成功取消。\n\n如需重新使用服務，請重新註冊。"
+                "✅ 您的註冊報班帳號已成功取消。\n\n如需重新使用服務，請重新註冊報班帳號。"
             )
         else:
             self.message_service.send_text(
                 reply_token,
-                "❌ 取消註冊失敗，請稍後再試或聯絡客服。"
+                "❌ 註銷報班帳號失敗，請稍後再試或聯絡客服。"
             )
     
     def show_user_profile(self, reply_token: str, user_id: str) -> None:
-        """顯示使用者註冊資料"""
+        """顯示使用者報班帳號資料"""
         if not self.auth_service:
-            self.message_service.send_text(reply_token, "❌ 查看註冊資料功能暫時無法使用。")
+            self.message_service.send_text(reply_token, "❌ 查看報班帳號資料功能暫時無法使用。")
             return
         
-        # 檢查是否已註冊
+        # 檢查是否已註冊報班帳號
         if not self.auth_service.is_line_user_registered(user_id):
             self.message_service.send_text(
                 reply_token,
-                "❌ 您尚未註冊，無法查看註冊資料。\n\n請先使用「註冊」功能完成註冊。"
+                "❌ 您尚未註冊報班帳號，無法查看報班帳號資料。\n\n請先使用「註冊報班帳號」功能完成註冊報班帳號。"
             )
             return
         
@@ -2476,14 +2476,14 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
             return
         
-        # 顯示註冊資料（使用文字訊息，因為內容較長）
-        user_info = f"""📋 您的註冊資料：
+        # 顯示報班帳號資料（使用文字訊息，因為內容較長）
+        user_info = f"""📋 您的報班帳號資料：
 
 • 姓名：{user.full_name or '未填寫'}
 • 手機：{user.phone or '未填寫'}
 • 地址：{user.address or '未填寫'}
 • Email：{user.email or '未填寫'}
-• 註冊時間：{user.created_at}"""
+• 註冊報班帳號時間：{user.created_at}"""
         
         # 準備操作按鈕
         actions = [
@@ -2494,7 +2494,7 @@ class JobHandler:
             },
             {
                 "type": "postback",
-                "label": "🗑️ 取消註冊",
+                "label": "🗑️ 註銷報班帳號",
                 "data": "action=delete_registration&step=confirm"
             },
             {
@@ -2512,10 +2512,10 @@ class JobHandler:
             },
             {
                 "type": "template",
-                "altText": "註冊資料操作",
+                "altText": "報班帳號資料操作",
                 "template": {
                     "type": "buttons",
-                    "title": "註冊資料",
+                    "title": "報班帳號資料",
                     "text": "請選擇操作：",
                     "actions": actions
                 }
@@ -2525,13 +2525,13 @@ class JobHandler:
         try:
             self.message_service.send_multiple_messages(reply_token, messages)
         except Exception as e:
-            print(f"❌ 發送註冊資料失敗: {e}")
+            print(f"❌ 發送報班帳號資料失敗: {e}")
             # 如果發送失敗，至少發送文字訊息
             self.message_service.send_text(reply_token, user_info)
     
     def show_main_menu(self, reply_token: str, user_id: Optional[str] = None) -> None:
         """顯示主選單"""
-        # 檢查使用者是否已註冊
+        # 檢查使用者是否已註冊報班帳號
         is_registered = False
         if self.auth_service and user_id:
             is_registered = self.auth_service.is_line_user_registered(user_id)
@@ -2539,10 +2539,10 @@ class JobHandler:
         actions = []
         
         if not is_registered:
-            # 未註冊使用者：顯示註冊選項
+            # 未註冊報班帳號使用者：顯示註冊報班帳號選項
             actions.append({
                 "type": "postback",
-                "label": "📝 註冊",
+                "label": "📝 註冊報班帳號",
                 "data": "action=register&step=register"
             })
         
@@ -2559,11 +2559,11 @@ class JobHandler:
             }
         ])
         
-        # 已註冊使用者：顯示查看註冊資料選項
+        # 已註冊報班帳號使用者：顯示查看報班帳號資料選項
         if is_registered:
             actions.append({
                 "type": "postback",
-                "label": "👤 查看註冊資料",
+                "label": "👤 查看報班帳號資料",
                 "data": "action=view_profile&step=view"
             })
         
@@ -2575,7 +2575,7 @@ class JobHandler:
         
         menu_text = "請選擇您需要的服務："
         if not is_registered:
-            menu_text = "⚠️ 您尚未註冊，請先完成註冊才能報班工作。\n\n" + menu_text
+            menu_text = "⚠️ 您尚未註冊報班帳號，請先完成註冊報班帳號才能報班工作。\n\n" + menu_text
         
         self.message_service.send_buttons_template(
             reply_token,
@@ -2606,14 +2606,14 @@ application_service = ApplicationService()
 
 @api_app.post("/api/auth/register", response_model=User, status_code=status.HTTP_201_CREATED)
 def register(user_data: UserCreate):
-    """註冊新使用者"""
+    """註冊報班帳號新使用者"""
     try:
         user = auth_service.create_user(user_data)
         return user
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"註冊失敗：{str(e)}")
+        raise HTTPException(status_code=500, detail=f"註冊報班帳號失敗：{str(e)}")
 
 @api_app.post("/api/auth/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -2949,16 +2949,16 @@ class PartTimeJobBot:
         """處理文字訊息"""
         message_text = event['message'].get('text', '')
         
-        # 檢查是否在註冊流程中
+        # 檢查是否在註冊報班帳號流程中
         if user_id in self.handler.registration_states:
-            # 如果輸入的是 menu 相關指令，先清除註冊狀態，然後顯示主選單
+            # 如果輸入的是 menu 相關指令，先清除註冊報班帳號狀態，然後顯示主選單
             if message_text.strip().lower() in ['選單', 'menu', 'menus', 'Menu', 'MENU', '工作', 'jobs']:
-                # 清除註冊狀態
+                # 清除註冊報班帳號狀態
                 if user_id in self.handler.registration_states:
                     del self.handler.registration_states[user_id]
                 self.handler.show_main_menu(reply_token, user_id)
                 return
-            # 其他情況正常處理註冊輸入
+            # 其他情況正常處理註冊報班帳號輸入
             self.handler.handle_register_input(reply_token, user_id, message_text)
             return
         
@@ -2981,7 +2981,7 @@ class PartTimeJobBot:
             self.handler.show_available_jobs(reply_token, user_id)
         elif message_text in ['已報班', '我的報班', '報班記錄', 'my_applications']:
             self.handler.show_user_applications(reply_token, user_id)
-        elif message_text in ['註冊', 'register', 'Register', 'REGISTER']:
+        elif message_text in ['註冊報班帳號', 'register', 'Register', 'REGISTER']:
             self.handler.handle_register(reply_token, user_id)
         else:
             # 預設顯示主選單

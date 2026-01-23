@@ -36,3 +36,15 @@ preload_app = True
 
 # 優雅重啟超時時間
 graceful_timeout = 30
+
+
+def on_starting(server):
+    """
+    Gunicorn 啟動時的 hook
+    確保日誌系統已配置為統一格式
+    """
+    # 在 Gunicorn 啟動時配置日誌系統
+    # 注意：Gunicorn 的啟動訊息（如 "Starting gunicorn 24.0.0"）是在此 hook 
+    # 之前就輸出的，所以無法直接控制它們的格式
+    from app.core.logger import setup_gunicorn_logger
+    setup_gunicorn_logger()

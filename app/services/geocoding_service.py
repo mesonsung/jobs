@@ -6,6 +6,10 @@ from typing import Optional, Tuple
 import requests
 
 from app.config import GOOGLE_MAPS_API_KEY
+from app.core.logger import setup_logger
+
+# 設置 logger
+logger = setup_logger(__name__)
 
 
 class GeocodingService:
@@ -32,7 +36,7 @@ class GeocodingService:
             Optional[Tuple[float, float]]: (緯度, 經度) 或 None（如果失敗）
         """
         if not self.api_key:
-            print("⚠️  警告：未設定 GOOGLE_MAPS_API_KEY，無法取得座標")
+            logger.warning("未設定 GOOGLE_MAPS_API_KEY，無法取得座標")
             return None
         
         try:
@@ -53,24 +57,24 @@ class GeocodingService:
                 longitude = location.get("lng")
                 
                 if latitude and longitude:
-                    print(f"✅ 成功取得座標：{address} -> ({latitude}, {longitude})")
+                    logger.debug(f"成功取得座標：{address} -> ({latitude}, {longitude})")
                     return (float(latitude), float(longitude))
                 else:
-                    print(f"⚠️  警告：無法從回應中取得座標：{address}")
+                    logger.warning(f"無法從回應中取得座標：{address}")
                     return None
             else:
                 status = data.get("status", "UNKNOWN")
-                print(f"⚠️  Geocoding API 錯誤：{status} - {address}")
+                logger.warning(f"Geocoding API 錯誤：{status} - {address}")
                 return None
                 
         except requests.exceptions.RequestException as e:
-            print(f"❌ Geocoding API 請求錯誤：{e}")
+            logger.error(f"Geocoding API 請求錯誤：{e}", exc_info=True)
             return None
         except (KeyError, ValueError, IndexError) as e:
-            print(f"❌ 解析 Geocoding 回應錯誤：{e}")
+            logger.error(f"解析 Geocoding 回應錯誤：{e}", exc_info=True)
             return None
         except Exception as e:
-            print(f"❌ 取得座標時發生未預期錯誤：{e}")
+            logger.error(f"取得座標時發生未預期錯誤：{e}", exc_info=True)
             return None
     
     def get_address_from_coordinates(self, latitude: float, longitude: float) -> Optional[str]:
@@ -85,7 +89,7 @@ class GeocodingService:
             Optional[str]: 地址字串或 None（如果失敗）
         """
         if not self.api_key:
-            print("⚠️  警告：未設定 GOOGLE_MAPS_API_KEY，無法取得地址")
+            logger.warning("未設定 GOOGLE_MAPS_API_KEY，無法取得地址")
             return None
         
         try:
@@ -103,22 +107,22 @@ class GeocodingService:
             if data.get("status") == "OK" and data.get("results"):
                 formatted_address = data["results"][0].get("formatted_address")
                 if formatted_address:
-                    print(f"✅ 成功取得地址：({latitude}, {longitude}) -> {formatted_address}")
+                    logger.debug(f"成功取得地址：({latitude}, {longitude}) -> {formatted_address}")
                     return formatted_address
                 else:
-                    print(f"⚠️  警告：無法從回應中取得地址：({latitude}, {longitude})")
+                    logger.warning(f"無法從回應中取得地址：({latitude}, {longitude})")
                     return None
             else:
                 status = data.get("status", "UNKNOWN")
-                print(f"⚠️  Reverse Geocoding API 錯誤：{status} - ({latitude}, {longitude})")
+                logger.warning(f"Reverse Geocoding API 錯誤：{status} - ({latitude}, {longitude})")
                 return None
                 
         except requests.exceptions.RequestException as e:
-            print(f"❌ Reverse Geocoding API 請求錯誤：{e}")
+            logger.error(f"Reverse Geocoding API 請求錯誤：{e}", exc_info=True)
             return None
         except (KeyError, ValueError) as e:
-            print(f"❌ 解析 Reverse Geocoding 回應錯誤：{e}")
+            logger.error(f"解析 Reverse Geocoding 回應錯誤：{e}", exc_info=True)
             return None
         except Exception as e:
-            print(f"❌ 取得地址時發生未預期錯誤：{e}")
+            logger.error(f"取得地址時發生未預期錯誤：{e}", exc_info=True)
             return None

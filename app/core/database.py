@@ -4,6 +4,10 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.config import DATABASE_URL
+from app.core.logger import setup_logger
+
+# 設置 logger
+logger = setup_logger(__name__)
 
 # 建立 Base 類別
 Base = declarative_base()
@@ -28,7 +32,7 @@ def init_db():
     """初始化資料庫，建立所有資料表"""
     try:
         Base.metadata.create_all(bind=engine)
-        print("✅ 資料庫表已建立")
+        logger.info("資料庫表已建立")
     except Exception as e:
-        print(f"⚠️  資料庫初始化失敗：{e}")
+        logger.warning(f"資料庫初始化失敗：{e}", exc_info=True)
         raise
