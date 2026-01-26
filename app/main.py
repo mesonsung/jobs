@@ -82,7 +82,7 @@ def create_sample_jobs(job_service: JobService, geocoding_service: GeocodingServ
     db = SessionLocal()
     try:
         existing_jobs = db.query(JobModel).count()
-        if existing_jobs > 0:
+        if existing_jobs > 3:
             logger.info("已有工作資料，跳過建立測試資料")
             return
     finally:

@@ -134,7 +134,7 @@ class JobHandler:
                 actions = [
                     {
                         "type": "postback",
-                        "label": "查看詳情",
+                        "label": "🔍 查看詳情",
                         "data": f"action=job&step=detail&job_id={job.id}"
                     }
                 ]
@@ -149,20 +149,20 @@ class JobHandler:
                 elif is_applied:
                     actions.append({
                         "type": "postback",
-                        "label": "取消報班",
+                        "label": "🚫 取消報班",
                         "data": f"action=job&step=cancel&job_id={job.id}"
                     })
                 else:
                     actions.append({
                         "type": "postback",
-                        "label": "報班",
+                        "label": "📝 報班",
                         "data": f"action=job&step=apply&job_id={job.id}"
                     })
                 
                 # 加入導航按鈕（第三個）
                 actions.append({
                     "type": "uri",
-                    "label": "導航",
+                    "label": "🧭 導航",
                     "uri": navigation_url
                 })
                 
@@ -303,26 +303,26 @@ class JobHandler:
         elif is_applied:
             actions.append({
                 "type": "postback",
-                "label": "取消報班",
+                "label": "🚫 取消報班",
                 "data": f"action=job&step=cancel&job_id={job_id}"
             })
         else:
             actions.append({
                 "type": "postback",
-                "label": "報班",
+                "label": "📝 報班",
                 "data": f"action=job&step=apply&job_id={job_id}"
             })
         
         # 加入導航按鈕
         actions.append({
             "type": "uri",
-            "label": "導航",
+            "label": "🧭 導航",
             "uri": navigation_url
         })
         
         actions.append({
             "type": "postback",
-            "label": "返回工作列表",
+            "label": "🔙 返回工作列表",
             "data": "action=job&step=list"
         })
         
@@ -347,7 +347,7 @@ class JobHandler:
             "template": {
                 "type": "buttons",
                 "title": job.name,
-                "text": "請選擇操作：",
+                "text": "📋 請選擇操作：",
                 "actions": actions
             }
         })
@@ -383,7 +383,7 @@ class JobHandler:
         for shift in job.shifts[:4]:  # LINE 按鈕最多4個
             shift_actions.append({
                 "type": "postback",
-                "label": shift,
+                "label": f"📅 {shift}",
                 "data": f"action=job&step=select_shift&job_id={job_id}&shift={urllib.parse.quote(shift)}"
             })
         
@@ -397,8 +397,8 @@ class JobHandler:
                 "altText": "選擇班別",
                 "template": {
                     "type": "buttons",
-                    "title": "選擇班別",
-                    "text": "請選擇您要報班的班別：",
+                    "title": "📅 選擇班別",
+                    "text": "請選擇報班的班別：",
                     "actions": shift_actions
                 }
             }
@@ -479,12 +479,12 @@ class JobHandler:
         actions = [
             {
                 "type": "postback",
-                "label": "確認取消",
+                "label": "✅ 確認取消",
                 "data": f"action=job&step=confirm_cancel&job_id={job_id}"
             },
             {
                 "type": "postback",
-                "label": "不取消",
+                "label": "🚫 不取消",
                 "data": f"action=job&step=detail&job_id={job_id}"
             }
         ]
@@ -496,10 +496,10 @@ class JobHandler:
             },
             {
                 "type": "template",
-                "altText": "確認取消報班",
+                "altText": "📋 確認取消報班",
                 "template": {
                     "type": "buttons",
-                    "title": "確認取消報班",
+                    "title": "📋 確認取消報班",
                     "text": "確定要取消這個報班嗎？",
                     "actions": actions
                 }
@@ -611,7 +611,7 @@ class JobHandler:
             actions = [
                 {
                     "type": "postback",
-                    "label": "查看詳情",
+                    "label": "🔍 查看詳情",
                     "data": f"action=job&step=detail&job_id={job.id}"
                 }
             ]
@@ -620,12 +620,12 @@ class JobHandler:
                 actions.extend([
                     {
                         "type": "postback",
-                        "label": "取消報班",
+                        "label": "🚫 取消報班",
                         "data": f"action=job&step=cancel&job_id={job.id}"
                     },
                     {
                         "type": "uri",
-                        "label": "導航",
+                        "label": "🧭 導航",
                         "uri": navigation_url
                     }
                 ])
@@ -665,12 +665,12 @@ class JobHandler:
                     "actions": [
                         {
                             "type": "postback",
-                            "label": "返回主選單",
+                            "label": "🔙 返回主選單",
                             "data": "action=job&step=menu"
                         },
                         {
                             "type": "postback",
-                            "label": "查看工作列表",
+                            "label": "🔍 工作列表",
                             "data": "action=job&step=list"
                         }
                     ]
@@ -897,7 +897,7 @@ class JobHandler:
             },
             {
                 "type": "postback",
-                "label": "返回",
+                "label": "🔙 返回",
                 "data": "action=view_profile&step=view"
             }
         ]
@@ -1077,12 +1077,12 @@ class JobHandler:
             },
             {
                 "type": "postback",
-                "label": "🗑️ 註銷報班帳號",
+                "label": "🗑️ 註銷帳號",
                 "data": "action=delete_registration&step=confirm"
             },
             {
                 "type": "postback",
-                "label": "返回主選單",
+                "label": "🔙 返回主選單",
                 "data": "action=job&step=menu"
             }
         ]
@@ -1102,7 +1102,7 @@ class JobHandler:
                 "altText": "報班帳號資料操作",
                 "template": {
                     "type": "buttons",
-                    "title": "報班帳號資料",
+                    "title": "📋 報班帳號",
                     "text": "請選擇操作：",
                     "actions": actions
                 }
@@ -1143,19 +1143,19 @@ class JobHandler:
         actions = [
             {
                 "type": "postback",
-                "label": "確認註銷",
+                "label": "✅ 確認註銷",
                 "data": "action=delete_registration&step=confirm_delete"
             },
             {
                 "type": "postback",
-                "label": "返回",
+                "label": "🔙 返回",
                 "data": "action=view_profile&step=view"
             }
         ]
         
         self.message_service.send_buttons_template(
             reply_token,
-            "註銷報班帳號",
+            "🗑️ 註銷報班帳號",
             confirm_text,
             actions
         )
@@ -1185,7 +1185,7 @@ class JobHandler:
             
             self.message_service.send_text(
                 reply_token,
-                "✅ 您的註冊報班帳號已成功取消。\n\n如需重新使用服務，請重新註冊報班帳號。"
+                "✅ 您的報班帳號已成功取消。\n\n如需重新使用服務，請重新註冊報班帳號。"
             )
         else:
             self.message_service.send_text(
@@ -1231,12 +1231,12 @@ class JobHandler:
             },
             {
                 "type": "postback",
-                "label": "🗑️ 註銷報班帳號",
+                "label": "🗑️ 註銷帳號",
                 "data": "action=delete_registration&step=confirm"
             },
             {
                 "type": "postback",
-                "label": "返回主選單",
+                "label": "🔙 返回主選單",
                 "data": "action=job&step=menu"
             }
         ]
@@ -1252,7 +1252,7 @@ class JobHandler:
                 "altText": "報班帳號資料操作",
                 "template": {
                     "type": "buttons",
-                    "title": "報班帳號資料",
+                    "title": "📋 報班帳號",
                     "text": "請選擇操作：",
                     "actions": actions
                 }
@@ -1286,12 +1286,12 @@ class JobHandler:
         actions.extend([
             {
                 "type": "postback",
-                "label": "查看工作列表",
+                "label": "📋 工作列表",
                 "data": "action=job&step=list"
             },
             {
                 "type": "postback",
-                "label": "查詢已報班",
+                "label": "🔍 已報班記錄",
                 "data": "action=job&step=my_applications"
             }
         ])
@@ -1300,26 +1300,26 @@ class JobHandler:
         if is_registered:
             actions.append({
                 "type": "postback",
-                "label": "👤 查看報班帳號資料",
+                "label": "👤 報班帳號",
                 "data": "action=view_profile&step=view"
             })
         
         actions.append({
             "type": "message",
-            "label": "聯絡客服",
+            "label": "📞 聯絡客服",
             "text": "我需要客服協助"
         })
         
         menu_text = "請選擇您需要的服務："
         if not is_registered:
-            menu_text = "⚠️ 您尚未註冊報班帳號，請先完成註冊報班帳號才能報班工作。\n\n" + menu_text
+            menu_text = "⚠️ 您尚未註冊報班帳號，請先完成註冊才能報班工作。\n\n" + menu_text
         
         return {
             "type": "template",
-            "altText": "Good Jobs 報班系統",
+            "altText": "💼 Good Jobs 報班系統",
             "template": {
                 "type": "buttons",
-                "title": "Good Jobs 報班系統",
+                "title": "💼 Good Jobs 報班系統",
                 "text": menu_text,
                 "actions": actions
             }
