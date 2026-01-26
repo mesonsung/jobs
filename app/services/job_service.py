@@ -188,7 +188,7 @@ class JobService:
                 db.close()
     
     def get_available_jobs(self, db: Optional[Session] = None) -> List[Job]:
-        """取得可報班的工作（日期大於等於今天）"""
+        """取得可報班的工作（日期大於等於今天），按日期升序排序（從早到晚）"""
         if db is None:
             db = self._get_db()
             should_close = True
@@ -197,9 +197,10 @@ class JobService:
         
         try:
             today = datetime.date.today().strftime('%Y-%m-%d')
-            job_models = db.query(JobModel).filter(JobModel.date >= today).order_by(JobModel.date).all()
+            # 按日期升序排序（從早到晚），確保工作按照日期順序顯示
+            job_models = db.query(JobModel).filter(JobModel.date >= today).order_by(JobModel.date.asc()).all()
             
-            return [
+            jobs = [
                 Job(
                     id=job.id,
                     name=job.name,
@@ -212,6 +213,12 @@ class JobService:
                 )
                 for job in job_models
             ]
+            
+            # 再次確保排序正確（以防資料庫排序有問題）
+            # 由於 date 是 YYYY-MM-DD 格式的字串，可以直接排序
+            jobs.sort(key=lambda x: x.date)
+            
+            return jobs
         finally:
             if should_close:
                 db.close()

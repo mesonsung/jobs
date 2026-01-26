@@ -13,7 +13,7 @@ from app.services.job_service import JobService
 from app.services.application_service import ApplicationService
 from app.services.line_message_service import LineMessageService
 from app.services.auth_service import AuthService
-from app.bot.handler import JobHandler, registration_states, edit_profile_states
+from app.bot.handler import JobHandler
 from app.core.logger import setup_logger, setup_gunicorn_logger, DEFAULT_LOG_FORMAT, DEFAULT_DATE_FORMAT
 
 # 在模組導入時就配置好 Gunicorn logger，確保啟動訊息也使用統一格式
@@ -165,13 +165,14 @@ class PartTimeJobBot:
         
         logger.debug(f"_handle_message: 收到文字訊息：{message_text} (user_id: {user_id})")
         # 檢查是否在註冊報班帳號流程中
-        logger.debug(f"_handle_message: registration_states: {registration_states} (user_id: {user_id})")
-        if user_id in registration_states:
+        registration_state = self.handler.state_service.get_registration_state(user_id)
+        if registration_state is not None:
             self.handler.handle_register_input(reply_token, user_id, message_text)
             return
         
         # 檢查是否在修改資料流程中
-        if user_id in edit_profile_states:
+        edit_profile_state = self.handler.state_service.get_edit_profile_state(user_id)
+        if edit_profile_state is not None:
             self.handler.handle_edit_profile_input(reply_token, user_id, message_text)
             return
         
@@ -214,7 +215,7 @@ class PartTimeJobBot:
                 field = parsed_data.get('field', [''])[0]
                 if field:
                     # 設定修改狀態並提示輸入
-                    edit_profile_states[user_id] = {'field': field}
+                    self.handler.state_service.new_edit_profile_state(user_id, field)
                     user = self.handler.auth_service.get_user_by_line_id(user_id) if self.handler.auth_service else None
                     
                     if field == 'phone':

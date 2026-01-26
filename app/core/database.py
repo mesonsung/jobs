@@ -30,6 +30,14 @@ def get_db() -> Session:
 
 def init_db():
     """初始化資料庫，建立所有資料表"""
+    # 導入所有模型，確保它們被註冊到 Base.metadata
+    from app.models import (  # noqa: F401
+        JobModel,
+        ApplicationModel,
+        UserModel,
+        RegistrationStateModel,
+    )
+    
     try:
         Base.metadata.create_all(bind=engine)
         logger.info("資料庫表已建立")

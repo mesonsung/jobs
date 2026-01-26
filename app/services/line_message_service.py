@@ -105,3 +105,52 @@ class LineMessageService:
             json=payload,
             timeout=10
         )
+    
+    def send_carousel_template(self, reply_token: str, alt_text: str, columns: List[Dict]) -> requests.Response:
+        """
+        發送輪播範本訊息（Carousel Template）
+        
+        參數:
+            reply_token: LINE 回覆令牌
+            alt_text: 替代文字（當用戶的裝置不支援模板訊息時顯示）
+            columns: 輪播欄位列表（最多 10 個），每個欄位是一個 bubble 物件
+                    格式：{
+                        "thumbnailImageUrl": "圖片 URL（可選）",
+                        "title": "標題（最多 40 字元）",
+                        "text": "文字內容（最多 120 字元，建議 60 字元以內）",
+                        "actions": [按鈕列表，最多 3 個]
+                    }
+        """
+        # LINE API 限制：Carousel 最多 10 個 columns
+        if len(columns) > 10:
+            logger.warning(f"Carousel columns 超過 10 個，將只發送前 10 個")
+            columns = columns[:10]
+        
+        carousel_template = {
+            "type": "template",
+            "altText": alt_text,
+            "template": {
+                "type": "carousel",
+                "columns": columns
+            }
+        }
+        
+        payload = {
+            "replyToken": reply_token,
+            "messages": [carousel_template]
+        }
+        
+        try:
+            response = requests.post(
+                self.api_url,
+                headers=self._get_headers(),
+                json=payload,
+                timeout=10
+            )
+            response.raise_for_status()
+            return response
+        except requests.exceptions.RequestException as e:
+            logger.error(f"發送 Carousel Template 失敗：{e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logger.debug(f"回應內容：{e.response.text}")
+            raise

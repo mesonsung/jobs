@@ -10,6 +10,7 @@ from app.services.job_service import JobService
 from app.services.application_service import ApplicationService
 from app.services.line_message_service import LineMessageService
 from app.services.auth_service import AuthService
+from app.services.state_service import StateService
 from app.models.schemas import Job, Application
 from app.core.logger import setup_logger
 
@@ -17,31 +18,6 @@ from email_validator import validate_email as validate_email_address, EmailNotVa
 
 # 設置 logger
 logger = setup_logger(__name__)
-
-# 全域共用的狀態管理（所有 JobHandler 實例共享）
-# 註冊報班帳號狀態管理：{user_id: {'step': step, 'data': {...}}}
-registration_states: Dict[str, Dict[str, Any]] = {}
-# 修改資料狀態管理：{user_id: {'field': field_name}}
-edit_profile_states: Dict[str, Dict[str, Any]] = {}
-
-def new_registration_state(user_id: str) -> Dict[str, Any]:
-    logger.debug(f"new_registration_state: user_id: {user_id}")
-    registration_states[user_id] = state = {
-        'step': 'name',
-        'data': {}
-    }   
-    return state
-
-def get_registration_state(user_id: str) -> Optional[Dict[str, Any]]:
-    state = registration_states.get(user_id, None)
-    logger.debug(f"get_registration_state for user_id: {user_id}: state: {state}")
-    return state
-
-
-def delete_registration_state(user_id: str) -> None:
-    logger.debug(f"delete_registration_state: user_id: {user_id}")
-    if user_id in registration_states:
-        del registration_states[user_id]
 
 
 def validate_email(email: str) -> bool:
@@ -76,19 +52,26 @@ def validate_email(email: str) -> bool:
 class JobHandler:
     """工作事件處理器"""
     
-    def __init__(self, job_service: JobService, application_service: ApplicationService, message_service: LineMessageService, auth_service: Optional[AuthService] = None):
+    def __init__(self, job_service: JobService, application_service: ApplicationService, message_service: LineMessageService, auth_service: Optional[AuthService] = None, state_service: Optional[StateService] = None):
         self.job_service = job_service
         self.application_service = application_service
         self.message_service = message_service
         self.auth_service = auth_service
-        # 注意：registration_states 和 edit_profile_states 現在是模組級的全域變數
-        # 所有 JobHandler 實例都會共享同一個狀態字典
+        # 使用資料庫狀態服務，支援 Gunicorn 多進程環境
+        self.state_service = state_service or StateService()
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
-        """顯示可報班的工作列表"""
+        """顯示可報班的工作列表（使用輪播方式，按日期升序排序）"""
         jobs = self.job_service.get_available_jobs()
         
         logger.info(f"查詢可報班工作：找到 {len(jobs)} 個工作")
+        # 記錄每個工作的 ID 和名稱，方便調試（按日期排序）
+        for i, job in enumerate(jobs, 1):
+            logger.debug(f"工作 {i}: {job.id} - {job.name} - {job.date} (按日期排序)")
+        
+        # 確保工作按日期排序（從早到晚）
+        # 雖然 get_available_jobs 已經排序，但這裡再次確認
+        jobs = sorted(jobs, key=lambda x: x.date)
         
         if not jobs:
             self.message_service.send_text(
@@ -97,149 +80,180 @@ class JobHandler:
             )
             return
         
-        # 建立工作列表訊息
+        # LINE API 限制：
+        # - Carousel 最多 10 個 columns
+        # - 一次回覆最多 5 個訊息
+        MAX_CAROUSEL_COLUMNS = 10
+        MAX_MESSAGES_PER_REPLY = 5
+        
+        # 只處理第一批工作（最多 10 個），確保不超過訊息限制
+        # 如果工作超過 10 個，只顯示前 10 個
+        display_jobs = jobs[:MAX_CAROUSEL_COLUMNS]
+        logger.info(f"將顯示 {len(display_jobs)} 個工作（總共 {len(jobs)} 個）")
+        
+        # 準備訊息（文字訊息 + 輪播訊息），在同一個回覆中發送
         messages = []
-        messages.append({
-            "type": "text",
-            "text": f"📋 可報班的工作（共 {len(jobs)} 個）："
-        })
         
-        # 每個工作建立一個 Flex 訊息或按鈕訊息
-        for job in jobs:
-            # 檢查使用者是否已報班
-            is_applied = False
-            applied_shift = None
-            if user_id:
-                application = self.application_service.get_user_application_for_job(user_id, job.id)
-                if application:
-                    is_applied = True
-                    applied_shift = application.shift
-            
-            # 建立狀態標示
-            status_icon = "✅ 已報班" if is_applied else "⭕ 未報班"
-            status_text = f"\n{status_icon}"
-            if is_applied and applied_shift:
-                status_text += f" ({applied_shift})"
-            
-            # 建立 Google Maps 導航 URL
-            encoded_location = urllib.parse.quote(job.location)
-            navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
-            
-            # 檢查使用者是否已註冊報班帳號
-            is_registered = True
-            if self.auth_service:
-                is_registered = self.auth_service.is_line_user_registered(user_id) if user_id else False
-            
-            # 建立按鈕動作
-            actions = [
-                {
-                    "type": "postback",
-                    "label": "查看詳情",
-                    "data": f"action=job&step=detail&job_id={job.id}"
-                }
-            ]
-            
-            # 如果未註冊報班帳號，加入註冊報班帳號按鈕
-            if not is_registered:
-                actions.append({
-                    "type": "postback",
-                    "label": "📝 註冊報班帳號",
-                    "data": "action=register&step=register"
-                })
-            # 根據報班狀態加入不同按鈕
-            elif is_applied:
-                # 已報班：加入取消報班按鈕
-                actions.append({
-                    "type": "postback",
-                    "label": "取消報班",
-                    "data": f"action=job&step=cancel&job_id={job.id}"
-                })
-            else:
-                # 未報班：加入報班按鈕
-                actions.append({
-                    "type": "postback",
-                    "label": "報班",
-                    "data": f"action=job&step=apply&job_id={job.id}"
-                })
-            
-            # 加入導航按鈕
-            actions.append({
-                "type": "uri",
-                "label": "導航",
-                "uri": navigation_url
-            })
-            
-            # 建立按鈕範本文字（確保不超過 60 字元，包括換行符）
-            # 簡化地點顯示（如果太長）
-            location_display = job.location
-            max_location_len = 18
-            if len(location_display) > max_location_len:
-                location_display = location_display[:max_location_len-3] + "..."
-            
-            # 建立班別顯示文字
-            if len(job.shifts) == 1:
-                shifts_display = job.shifts[0]
-            elif len(job.shifts) == 2:
-                shifts_display = ", ".join(job.shifts)
-            else:
-                # 多個班別時，只顯示第一個和總數
-                shifts_display = f"{job.shifts[0]}等{len(job.shifts)}個"
-            
-            # 建立基本文字（不含狀態）
-            base_text = f"📍{location_display}\n📅{job.date}\n⏰{shifts_display}"
-            
-            # 嘗試加入狀態文字
-            if is_applied:
-                status_display = "\n✅已報班"
-                if applied_shift and len(applied_shift) <= 10:
-                    status_display += f"({applied_shift[:8]})"
-            else:
-                status_display = "\n⭕未報班"
-            
-            # 檢查總長度（換行符算 1 個字元）
-            test_text = base_text + status_display
-            if len(test_text) <= 60:
-                job_text = test_text
-            else:
-                # 如果太長，簡化班別顯示
-                if len(job.shifts) > 1:
-                    shifts_display = f"{len(job.shifts)}個班別"
-                else:
-                    shifts_display = job.shifts[0][:10] if job.shifts else ""
-                
-                base_text = f"📍{location_display}\n📅{job.date}\n⏰{shifts_display}"
-                test_text = base_text + status_display
-                
-                if len(test_text) <= 60:
-                    job_text = test_text
-                else:
-                    # 最後手段：只顯示基本資訊，不顯示狀態
-                    job_text = base_text
-            
-            template = {
-                "type": "buttons",
-                "title": job.name[:40],  # LINE 限制標題長度
-                "text": job_text,
-                "actions": actions
-            }
-            
-            # 如果有圖片，加入縮圖（LINE API 不接受 None 值）
-            if job.location_image_url:
-                template["thumbnailImageUrl"] = job.location_image_url
-                # 也可以選擇發送單獨的圖片訊息
-                # messages.append({
-                #     "type": "image",
-                #     "originalContentUrl": job.location_image_url,
-                #     "previewImageUrl": job.location_image_url
-                # })
-            
+        # 添加工作總數文字訊息
+        if len(jobs) > MAX_CAROUSEL_COLUMNS:
             messages.append({
-                "type": "template",
-                "altText": job.name,
-                "template": template
+                "type": "text",
+                "text": f"📋 可報班的工作（共 {len(jobs)} 個）：\n\n顯示前 {MAX_CAROUSEL_COLUMNS} 個工作，請使用「查看詳情」查看完整資訊。"
+            })
+        else:
+            messages.append({
+                "type": "text",
+                "text": f"📋 可報班的工作（共 {len(jobs)} 個）："
             })
         
-        self.message_service.send_multiple_messages(reply_token, messages)
+        # 建立輪播 columns
+        columns = []
+        for job in display_jobs:
+            try:
+                logger.debug(f"處理工作：{job.id} - {job.name}")
+                
+                # 檢查使用者是否已報班
+                is_applied = False
+                applied_shift = None
+                if user_id:
+                    application = self.application_service.get_user_application_for_job(user_id, job.id)
+                    if application:
+                        is_applied = True
+                        applied_shift = application.shift
+                
+                # 建立 Google Maps 導航 URL
+                encoded_location = urllib.parse.quote(job.location)
+                navigation_url = f"https://www.google.com/maps/dir/?api=1&destination={encoded_location}"
+                
+                # 檢查使用者是否已註冊報班帳號
+                is_registered = True
+                if self.auth_service:
+                    is_registered = self.auth_service.is_line_user_registered(user_id) if user_id else False
+                
+                # 建立按鈕動作（Carousel 每個 bubble 最多 3 個按鈕）
+                actions = [
+                    {
+                        "type": "postback",
+                        "label": "查看詳情",
+                        "data": f"action=job&step=detail&job_id={job.id}"
+                    }
+                ]
+                
+                # 根據狀態加入第二個按鈕
+                if not is_registered:
+                    actions.append({
+                        "type": "postback",
+                        "label": "📝 註冊",
+                        "data": "action=register&step=register"
+                    })
+                elif is_applied:
+                    actions.append({
+                        "type": "postback",
+                        "label": "取消報班",
+                        "data": f"action=job&step=cancel&job_id={job.id}"
+                    })
+                else:
+                    actions.append({
+                        "type": "postback",
+                        "label": "報班",
+                        "data": f"action=job&step=apply&job_id={job.id}"
+                    })
+                
+                # 加入導航按鈕（第三個）
+                actions.append({
+                    "type": "uri",
+                    "label": "導航",
+                    "uri": navigation_url
+                })
+                
+                # 建立文字內容（Carousel text 最多 120 字元，但建議 60 字元以內）
+                # 簡化地點顯示
+                location_display = job.location or "未指定地點"
+                if len(location_display) > 20:
+                    location_display = location_display[:17] + "..."
+                
+                # 建立班別顯示文字
+                shifts = job.shifts or []
+                if len(shifts) == 0:
+                    shifts_display = "未指定班別"
+                elif len(shifts) == 1:
+                    shifts_display = shifts[0]
+                elif len(shifts) == 2:
+                    shifts_display = ", ".join(shifts)
+                else:
+                    shifts_display = f"{shifts[0]}等{len(shifts)}個"
+                
+                # 建立狀態標示
+                if is_applied:
+                    status_text = f"✅已報班"
+                    if applied_shift:
+                        status_text += f"({applied_shift[:6]})"  # 限制班別顯示長度
+                else:
+                    status_text = "⭕未報班"
+                
+                # 組合文字內容（最多 120 字元）
+                job_text = f"📍{location_display}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
+                
+                # 確保文字不超過 120 字元
+                if len(job_text) > 120:
+                    # 簡化班別顯示
+                    if len(shifts) > 1:
+                        shifts_display = f"{len(shifts)}個班別"
+                    else:
+                        shifts_display = shifts[0][:15] if shifts else "未指定"
+                    job_text = f"📍{location_display}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
+                    
+                    # 如果還是太長，進一步簡化
+                    if len(job_text) > 120:
+                        job_text = f"📍{location_display[:15]}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
+                
+                # 建立 Carousel column
+                column = {
+                    "title": (job.name or "未命名工作")[:40],  # LINE 限制標題最多 40 字元
+                    "text": job_text,
+                    "actions": actions
+                }
+                
+                # 如果有圖片，加入縮圖
+                if job.location_image_url:
+                    column["thumbnailImageUrl"] = job.location_image_url
+                
+                columns.append(column)
+                logger.debug(f"成功添加工作到輪播：{job.id} - {job.name}，目前 columns 數量：{len(columns)}")
+            except Exception as e:
+                logger.error(f"處理工作 {job.id} ({job.name}) 時發生錯誤：{e}", exc_info=True)
+                # 即使處理失敗，也繼續處理下一個工作
+                continue
+        
+        logger.info(f"輪播 columns 建立完成：共 {len(columns)} 個，原始工作數量：{len(display_jobs)}")
+        
+        # 將輪播訊息添加到 messages 列表
+        alt_text = f"可報班工作列表（1-{len(display_jobs)}/{len(jobs)}）"
+        carousel_message = {
+            "type": "template",
+            "altText": alt_text,
+            "template": {
+                "type": "carousel",
+                "columns": columns
+            }
+        }
+        messages.append(carousel_message)
+        
+        # 一次性發送所有訊息（文字 + 輪播，共 2 個訊息）
+        try:
+            self.message_service.send_multiple_messages(reply_token, messages)
+        except Exception as e:
+            logger.error(f"發送工作列表訊息失敗：{e}", exc_info=True)
+            # 如果發送失敗，嘗試發送簡單的文字訊息作為備用
+            try:
+                fallback_text = f"📋 可報班的工作（共 {len(jobs)} 個）：\n\n"
+                for i, job in enumerate(jobs[:5], 1):  # 只顯示前 5 個
+                    fallback_text += f"{i}. {job.name}\n   📍{job.location}\n   📅{job.date}\n\n"
+                if len(jobs) > 5:
+                    fallback_text += f"... 還有 {len(jobs) - 5} 個工作，請稍後再試。"
+                self.message_service.send_text(reply_token, fallback_text)
+            except Exception as fallback_error:
+                logger.error(f"發送備用訊息也失敗：{fallback_error}", exc_info=True)
     
     def show_job_detail(self, reply_token: str, user_id: str, job_id: str) -> None:
         """顯示工作詳情"""
@@ -690,8 +704,8 @@ class JobHandler:
             return
         
         # 開始註冊報班帳號流程 - 第一步：輸入姓名
-        state = new_registration_state(user_id)
-        print(f"Start registration state: {state}")
+        state = self.state_service.new_registration_state(user_id, step='name', data={})
+        logger.debug(f"Start registration state: {state}")
         
         self.message_service.send_text(
             reply_token,
@@ -712,8 +726,7 @@ class JobHandler:
             if not self.auth_service:
                 self.message_service.send_text(reply_token, "❌ 註冊報班帳號功能暫時無法使用。")
                 # 清除註冊報班帳號狀態
-                if user_id in registration_states:
-                    del registration_states[user_id]
+                self.state_service.delete_registration_state(user_id)
                 return
             
             # 建立使用者
@@ -737,8 +750,7 @@ class JobHandler:
 現在您可以開始報班工作了！"""
             
             # 清除註冊報班帳號狀態
-            if user_id in registration_states:
-                del registration_states[user_id]
+            self.state_service.delete_registration_state(user_id)
             
             # 發送成功訊息和主選單
             messages: List[Dict[str, Any]] = [
@@ -754,8 +766,7 @@ class JobHandler:
         except Exception as e:
             logger.error(f"註冊報班帳號失敗：{e}", exc_info=True)
             # 清除註冊報班帳號狀態
-            if user_id in registration_states:
-                del registration_states[user_id]
+            self.state_service.delete_registration_state(user_id)
             self.message_service.send_text(
                 reply_token,
                 f"❌ 註冊報班帳號失敗：{str(e)}\n\n請稍後再試或聯絡客服。"
@@ -765,7 +776,7 @@ class JobHandler:
                     
     def handle_register_input(self, reply_token: str, user_id: str, text: str) -> None:
 
-        state = get_registration_state(user_id)
+        state = self.state_service.get_registration_state(user_id)
         if state is None:
             logger.debug(f"handle_register_input: user_id: {user_id} not in registration_states")
             return
@@ -786,8 +797,8 @@ class JobHandler:
                 )
                 return
             state['data']['full_name'] = name
-            state['step'] = 'phone'
-            logger.debug(f"Set registration_states: new step: {state['step']} (data: {state['data']}) (user_id: {user_id})")
+            self.state_service.update_registration_state(user_id, step='phone', data=state['data'])
+            logger.debug(f"Set registration_states: new step: phone (data: {state['data']}) (user_id: {user_id})")
             self.message_service.send_text(
                 reply_token,
                 f"✅ 姓名已記錄：{name}\n\n第二步：請輸入您的手機號碼\n（格式：09XX-XXX-XXX 或 09XXXXXXXX）"
@@ -805,8 +816,8 @@ class JobHandler:
                 return
             
             state['data']['phone'] = phone
-            state['step'] = 'address'
-            logger.debug(f"Set registration_states: new step: {state['step']} (data: {state['data']}) (user_id: {user_id})")
+            self.state_service.update_registration_state(user_id, step='address', data=state['data'])
+            logger.debug(f"Set registration_states: new step: address (data: {state['data']}) (user_id: {user_id})")
             self.message_service.send_text(
                 reply_token,
                 f"✅ 手機號碼已記錄：{phone}\n\n第三步：請輸入您的地址"
@@ -823,8 +834,8 @@ class JobHandler:
                 return
 
             state['data']['address'] = address
-            state['step'] = 'email'
-            logger.debug(f"Set registration_states: new step: {state['step']} (data: {state['data']}) (user_id: {user_id})")
+            self.state_service.update_registration_state(user_id, step='email', data=state['data'])
+            logger.debug(f"Set registration_states: new step: email (data: {state['data']}) (user_id: {user_id})")
             self.message_service.send_text(
                 reply_token,
                 f"✅ 地址已記錄：{address}\n\n第四步：請輸入您的 Email"
@@ -842,6 +853,7 @@ class JobHandler:
                 return
             
             state['data']['email'] = email
+            self.state_service.update_registration_state(user_id, data=state['data'])
 
             self._handle_register_complete(reply_token, user_id, state['data'])
 
@@ -923,20 +935,19 @@ class JobHandler:
             return
         
         # 檢查是否在修改流程中
-        if user_id not in edit_profile_states:
+        state = self.state_service.get_edit_profile_state(user_id)
+        if state is None:
             return
         
         # 檢查是否要取消修改
         if text.strip().lower() in ['取消', 'cancel', '取消修改']:
-            if user_id in edit_profile_states:
-                del edit_profile_states[user_id]
+            self.state_service.delete_edit_profile_state(user_id)
             self.message_service.send_text(
                 reply_token,
                 "❌ 已取消修改流程。"
             )
             return
         
-        state = edit_profile_states[user_id]
         field = state.get('field')
         
         if field == 'phone':
@@ -961,15 +972,13 @@ class JobHandler:
                 )
                 
                 # 清除修改狀態
-                if user_id in edit_profile_states:
-                    del edit_profile_states[user_id]
+                self.state_service.delete_edit_profile_state(user_id)
                 
                 # 發送成功訊息並返回查看報班帳號資料頁面
                 success_message = f"✅ 手機號碼已更新為：{phone}"
                 self._send_update_success_and_show_profile(reply_token, user_id, success_message)
             else:
-                if user_id in edit_profile_states:
-                    del edit_profile_states[user_id]
+                self.state_service.delete_edit_profile_state(user_id)
                 self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
         
         elif field == 'address':
@@ -994,15 +1003,13 @@ class JobHandler:
                 )
                 
                 # 清除修改狀態
-                if user_id in edit_profile_states:
-                    del edit_profile_states[user_id]
+                self.state_service.delete_edit_profile_state(user_id)
                 
                 # 發送成功訊息並返回查看報班帳號資料頁面
                 success_message = f"✅ 地址已更新為：{address}"
                 self._send_update_success_and_show_profile(reply_token, user_id, success_message)
             else:
-                if user_id in edit_profile_states:
-                    del edit_profile_states[user_id]
+                self.state_service.delete_edit_profile_state(user_id)
                 self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
         
         elif field == 'email':
@@ -1031,8 +1038,7 @@ class JobHandler:
                 )
                 
                 # 清除修改狀態
-                if user_id in edit_profile_states:
-                    del edit_profile_states[user_id]
+                self.state_service.delete_edit_profile_state(user_id)
                 
                 # 發送成功訊息並返回查看報班帳號資料頁面
                 if email:
@@ -1041,8 +1047,7 @@ class JobHandler:
                     success_message = "✅ Email 已清除。"
                 self._send_update_success_and_show_profile(reply_token, user_id, success_message)
             else:
-                if user_id in edit_profile_states:
-                    del edit_profile_states[user_id]
+                self.state_service.delete_edit_profile_state(user_id)
                 self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
     
     def _send_update_success_and_show_profile(self, reply_token: str, user_id: str, success_message: str) -> None:
