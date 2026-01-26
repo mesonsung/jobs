@@ -107,7 +107,13 @@ class LineRichMenuService:
         except requests.exceptions.RequestException as e:
             logger.error(f"上傳 Rich Menu 圖片失敗：{e}")
             if hasattr(e, 'response') and e.response is not None:
-                logger.debug(f"回應內容：{e.response.text}")
+                logger.error(f"HTTP 狀態碼: {e.response.status_code}")
+                logger.error(f"回應內容：{e.response.text}")
+                try:
+                    error_json = e.response.json()
+                    logger.error(f"錯誤詳情：{error_json}")
+                except:
+                    pass
             return False
     
     def set_default_rich_menu(self, rich_menu_id: str) -> bool:

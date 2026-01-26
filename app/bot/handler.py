@@ -65,7 +65,7 @@ class JobHandler:
         self.rich_menu_service = rich_menu_service or LineRichMenuService()
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
-        """顯示可報班的工作列表（使用輪播方式，按日期升序排序）"""
+        """顯示可報班的可報班工作（使用輪播方式，按日期升序排序）"""
         jobs = self.job_service.get_available_jobs()
         
         logger.info(f"查詢可報班工作：找到 {len(jobs)} 個工作")
@@ -232,7 +232,7 @@ class JobHandler:
         logger.info(f"輪播 columns 建立完成：共 {len(columns)} 個，原始工作數量：{len(display_jobs)}")
         
         # 將輪播訊息添加到 messages 列表
-        alt_text = f"可報班工作列表（1-{len(display_jobs)}/{len(jobs)}）"
+        alt_text = f"可報班可報班工作（1-{len(display_jobs)}/{len(jobs)}）"
         carousel_message = {
             "type": "template",
             "altText": alt_text,
@@ -247,7 +247,7 @@ class JobHandler:
         try:
             self.message_service.send_multiple_messages(reply_token, messages)
         except Exception as e:
-            logger.error(f"發送工作列表訊息失敗：{e}", exc_info=True)
+            logger.error(f"發送可報班工作訊息失敗：{e}", exc_info=True)
             # 如果發送失敗，嘗試發送簡單的文字訊息作為備用
             try:
                 fallback_text = f"📋 可報班的工作（共 {len(jobs)} 個）：\n\n"
@@ -326,7 +326,7 @@ class JobHandler:
         
         actions.append({
             "type": "postback",
-            "label": "🔙 返回工作列表",
+            "label": "🔙 返回可報班工作",
             "data": "action=job&step=list"
         })
         
@@ -537,13 +537,13 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 取消報班失敗，請稍後再試。")
     
     def show_user_applications(self, reply_token: str, user_id: str) -> None:
-        """顯示使用者已報班的工作列表"""
+        """顯示使用者已報班的可報班工作"""
         applications = self.application_service.get_user_applications(user_id)
         
         if not applications:
             self.message_service.send_text(
                 reply_token,
-                "📋 您目前沒有任何報班記錄。\n\n請使用「查看工作列表」來尋找並報班工作。"
+                "📋 您目前沒有任何報班記錄。\n\n請使用「查看可報班工作」來尋找並報班工作。"
             )
             return
         
@@ -674,7 +674,7 @@ class JobHandler:
                         },
                         {
                             "type": "postback",
-                            "label": "🔍 工作列表",
+                            "label": "🔍 可報班工作",
                             "data": "action=job&step=list"
                         }
                     ]
@@ -1432,7 +1432,7 @@ class JobHandler:
         actions.extend([
             {
                 "type": "postback",
-                "label": "📋 工作列表",
+                "label": "📋 可報班工作",
                 "data": "action=job&step=list"
             },
             {

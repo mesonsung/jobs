@@ -143,7 +143,7 @@ def create_registered_user_menu(output_path: str = "rich_menu_registered.jpg"):
         try:
             if os.path.exists(font_path):
                 title_font = ImageFont.truetype(font_path, int(80 * 1.2))  # 放大 1.2 倍: 96
-                text_font = ImageFont.truetype(font_path, int(60 * 1.2))  # 放大 1.2 倍: 72
+                text_font = ImageFont.truetype(font_path, int(60 * 2))  # 放大 2.4 倍: 144
                 print(f"使用字體: {font_path}")
                 break
         except Exception as e:
@@ -154,12 +154,12 @@ def create_registered_user_menu(output_path: str = "rich_menu_registered.jpg"):
         try:
             # 嘗試使用系統字體
             title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(80 * 1.2))
-            text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", int(60 * 1.2))
+            text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", int(60 * 2))
         except:
             try:
                 # 嘗試使用其他常見字體
                 title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(80 * 1.2))
-                text_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(60 * 1.2))
+                text_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(60 * 2))
             except:
                 # 使用預設字體（可能無法顯示中文）
                 title_font = ImageFont.load_default()
@@ -188,17 +188,17 @@ def create_registered_user_menu(output_path: str = "rich_menu_registered.jpg"):
     center_y = (height - 200) // 2 + 200  # 區域中心 Y 座標
     
     # 區域1: 檢視註冊資料
-    text1 = "檢視\n註冊資料"
+    text1 = "檢視\n報班帳號"
     center_x1 = 833 // 2  # 區域1的中心 X 座標
     draw_multiline_text_centered(draw, text1, (center_x1, center_y), text_font, text_color, line_spacing=15)
     
     # 區域2: 可報班工作
-    text2 = "可報班\n工作"
+    text2 = "我想找工作"
     center_x2 = 833 + 833 // 2  # 區域2的中心 X 座標
     draw_multiline_text_centered(draw, text2, (center_x2, center_y), text_font, text_color, line_spacing=15)
     
     # 區域3: 已報班記錄
-    text3 = "已報班\n記錄"
+    text3 = "我的報班"
     center_x3 = 1666 + 834 // 2  # 區域3的中心 X 座標
     draw_multiline_text_centered(draw, text3, (center_x3, center_y), text_font, text_color, line_spacing=15)
     
@@ -272,7 +272,7 @@ def create_unregistered_user_menu(output_path: str = "rich_menu_unregistered.jpg
         try:
             if os.path.exists(font_path):
                 title_font = ImageFont.truetype(font_path, int(80 * 1.2))  # 放大 1.2 倍: 96
-                text_font = ImageFont.truetype(font_path, int(60 * 1.2))  # 放大 1.2 倍: 72
+                text_font = ImageFont.truetype(font_path, int(60 * 2))  # 放大 2.4 倍: 144
                 print(f"使用字體: {font_path}")
                 break
         except Exception as e:
@@ -283,12 +283,12 @@ def create_unregistered_user_menu(output_path: str = "rich_menu_unregistered.jpg
         try:
             # 嘗試使用系統字體
             title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", int(80 * 1.2))
-            text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", int(60 * 1.2))
+            text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", int(60 * 2))
         except:
             try:
                 # 嘗試使用其他常見字體
                 title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(80 * 1.2))
-                text_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(60 * 1.2))
+                text_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(60 * 2))
             except:
                 # 使用預設字體（可能無法顯示中文）
                 title_font = ImageFont.load_default()
@@ -317,7 +317,7 @@ def create_unregistered_user_menu(output_path: str = "rich_menu_unregistered.jpg
     center_y = (height - 200) // 2 + 200  # 區域中心 Y 座標
     
     # 區域1: 註冊功能
-    text1 = "註冊功能"
+    text1 = "註冊\n報班帳號"
     center_x1 = 1250 // 2  # 區域1的中心 X 座標
     draw_multiline_text_centered(draw, text1, (center_x1, center_y), text_font, text_color, line_spacing=15)
     

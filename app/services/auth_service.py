@@ -376,6 +376,35 @@ class AuthService:
             if should_close:
                 db.close()
     
+    def get_all_line_users(self, db: Optional[Session] = None) -> list[str]:
+        """
+        取得所有已註冊的 LINE 用戶 ID 列表
+        
+        參數:
+            db: 資料庫會話（可選）
+        
+        返回:
+            list[str]: LINE User ID 列表
+        """
+        if db is None:
+            db = self._get_db()
+            should_close = True
+        else:
+            should_close = False
+        
+        try:
+            # 取得所有有 line_user_id 的用戶
+            user_models = db.query(UserModel).filter(
+                UserModel.line_user_id.isnot(None)
+            ).all()
+            
+            line_user_ids = [user.line_user_id for user in user_models if user.line_user_id]
+            logger.info(f"取得 {len(line_user_ids)} 個已註冊的 LINE 用戶")
+            return line_user_ids
+        finally:
+            if should_close:
+                db.close()
+    
     def delete_line_user(self, line_user_id: str, db: Optional[Session] = None) -> bool:
         """
         取消 LINE 使用者註冊報班帳號

@@ -178,7 +178,7 @@ class PartTimeJobBot:
         
         if message_text.strip().lower() in ['選單', 'menu', 'menus']:
             self.handler.show_main_menu(reply_token, user_id)
-        elif message_text.strip().lower() in ['工作列表', '工作', 'jobs', 'list']:
+        elif message_text.strip().lower() in ['可報班工作', '工作', 'jobs', 'list']:
             self.handler.show_available_jobs(reply_token, user_id)
         elif message_text.strip().lower() in ['已報班', '我的報班', '報班記錄', 'applications']:
             self.handler.show_user_applications(reply_token, user_id)

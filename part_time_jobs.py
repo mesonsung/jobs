@@ -1297,7 +1297,7 @@ class JobHandler:
         self.edit_profile_states: Dict[str, Dict] = {}
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
-        """顯示可報班的工作列表"""
+        """顯示可報班的可報班工作"""
         jobs = self.job_service.get_available_jobs()
         
         print(f"📋 查詢可報班工作：找到 {len(jobs)} 個工作")
@@ -1309,7 +1309,7 @@ class JobHandler:
             )
             return
         
-        # 建立工作列表訊息
+        # 建立可報班工作訊息
         messages = []
         messages.append({
             "type": "text",
@@ -1520,7 +1520,7 @@ class JobHandler:
         
         actions.append({
             "type": "postback",
-            "label": "返回工作列表",
+            "label": "返回可報班工作",
             "data": "action=job&step=list"
         })
         
@@ -1731,13 +1731,13 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 取消報班失敗，請稍後再試。")
     
     def show_user_applications(self, reply_token: str, user_id: str) -> None:
-        """顯示使用者已報班的工作列表"""
+        """顯示使用者已報班的可報班工作"""
         applications = self.application_service.get_user_applications(user_id)
         
         if not applications:
             self.message_service.send_text(
                 reply_token,
-                "📋 您目前沒有任何報班記錄。\n\n請使用「查看工作列表」來尋找並報班工作。"
+                "📋 您目前沒有任何報班記錄。\n\n請使用「查看可報班工作」來尋找並報班工作。"
             )
             return
         
@@ -1868,7 +1868,7 @@ class JobHandler:
                         },
                         {
                             "type": "postback",
-                            "label": "查看工作列表",
+                            "label": "查看可報班工作",
                             "data": "action=job&step=list"
                         }
                     ]
@@ -2065,7 +2065,7 @@ class JobHandler:
                 actions.extend([
                     {
                         "type": "postback",
-                        "label": "查看工作列表",
+                        "label": "查看可報班工作",
                         "data": "action=job&step=list"
                     },
                     {
@@ -2549,7 +2549,7 @@ class JobHandler:
         actions.extend([
             {
                 "type": "postback",
-                "label": "查看工作列表",
+                "label": "查看可報班工作",
                 "data": "action=job&step=list"
             },
             {
@@ -2977,7 +2977,7 @@ class PartTimeJobBot:
         
         if message_text in ['選單', 'menu', 'Menu', 'MENU', '工作', 'jobs']:
             self.handler.show_main_menu(reply_token, user_id)
-        elif message_text in ['工作列表', '查看工作', 'list']:
+        elif message_text in ['可報班工作', '查看工作', 'list']:
             self.handler.show_available_jobs(reply_token, user_id)
         elif message_text in ['已報班', '我的報班', '報班記錄', 'my_applications']:
             self.handler.show_user_applications(reply_token, user_id)
