@@ -11,8 +11,10 @@ from app.services.application_service import ApplicationService
 from app.services.line_message_service import LineMessageService
 from app.services.auth_service import AuthService
 from app.services.state_service import StateService
+from app.services.rich_menu_service import LineRichMenuService
 from app.models.schemas import Job, Application
 from app.core.logger import setup_logger
+from app.config import REGISTERED_USER_RICH_MENU_ID, UNREGISTERED_USER_RICH_MENU_ID
 
 from email_validator import validate_email as validate_email_address, EmailNotValidError
 
@@ -52,13 +54,15 @@ def validate_email(email: str) -> bool:
 class JobHandler:
     """工作事件處理器"""
     
-    def __init__(self, job_service: JobService, application_service: ApplicationService, message_service: LineMessageService, auth_service: Optional[AuthService] = None, state_service: Optional[StateService] = None):
+    def __init__(self, job_service: JobService, application_service: ApplicationService, message_service: LineMessageService, auth_service: Optional[AuthService] = None, state_service: Optional[StateService] = None, rich_menu_service: Optional[LineRichMenuService] = None):
         self.job_service = job_service
         self.application_service = application_service
         self.message_service = message_service
         self.auth_service = auth_service
         # 使用資料庫狀態服務，支援 Gunicorn 多進程環境
         self.state_service = state_service or StateService()
+        # Rich Menu 服務（用於自動設定用戶的 Rich Menu）
+        self.rich_menu_service = rich_menu_service or LineRichMenuService()
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
         """顯示可報班的工作列表（使用輪播方式，按日期升序排序）"""
@@ -729,6 +733,9 @@ class JobHandler:
                 self.state_service.delete_registration_state(user_id)
                 return
             
+            # 檢查是否為新註冊的用戶（在建立之前檢查）
+            is_new_user = not self.auth_service.is_line_user_registered(user_id)
+            
             # 建立使用者
             user = self.auth_service.create_line_user(
                 line_user_id=user_id,
@@ -737,6 +744,77 @@ class JobHandler:
                 address=address,
                 email=email
             )
+            
+            # 自動為新註冊的用戶設定已註冊用戶的 Rich Menu
+            if is_new_user:
+                logger.info(f"檢測到新註冊用戶 {user_id}，準備設定 Rich Menu")
+                
+                # 優先使用環境變數設定的 Rich Menu ID
+                rich_menu_id = REGISTERED_USER_RICH_MENU_ID
+                logger.debug(f"從環境變數讀取的 REGISTERED_USER_RICH_MENU_ID: {rich_menu_id}")
+                
+                # 如果未設定，嘗試從 Rich Menu 列表中查找
+                if not rich_menu_id:
+                    logger.info("環境變數未設定，嘗試從 Rich Menu 列表中查找...")
+                    try:
+                        rich_menus = self.rich_menu_service.get_rich_menu_list()
+                        logger.debug(f"取得 {len(rich_menus)} 個 Rich Menu")
+                        
+                        # 方法1: 嘗試透過 name 欄位查找
+                        for rm in rich_menus:
+                            rm_id = rm.get('richMenuId')
+                            rm_name = rm.get('name', '')
+                            logger.debug(f"檢查 Rich Menu: ID={rm_id}, name={rm_name}")
+                            
+                            if rm_name == '已註冊用戶 Rich Menu':
+                                rich_menu_id = rm_id
+                                logger.info(f"透過 name 欄位找到已註冊用戶 Rich Menu: {rich_menu_id}")
+                                break
+                        
+                        # 方法2: 如果方法1失敗，透過詳細資訊查找（檢查 areas 數量）
+                        if not rich_menu_id:
+                            logger.info("透過 name 欄位未找到，嘗試透過詳細資訊查找...")
+                            for rm in rich_menus:
+                                rm_id = rm.get('richMenuId')
+                                if not rm_id or not isinstance(rm_id, str):
+                                    continue
+                                try:
+                                    rm_detail = self.rich_menu_service.get_rich_menu(rm_id)
+                                    if rm_detail:
+                                        areas = rm_detail.get('areas', [])
+                                        # 已註冊用戶有 3 個區域，未註冊用戶有 2 個區域
+                                        if len(areas) == 3:
+                                            # 進一步檢查是否有 "已報班記錄" 的 action
+                                            has_my_applications = any(
+                                                area.get('action', {}).get('data', '').endswith('my_applications')
+                                                for area in areas
+                                            )
+                                            if has_my_applications:
+                                                rich_menu_id = rm_id
+                                                logger.info(f"透過詳細資訊找到已註冊用戶 Rich Menu: {rich_menu_id}")
+                                                break
+                                except Exception as e:
+                                    logger.debug(f"取得 Rich Menu {rm_id} 詳細資訊時發生錯誤：{e}")
+                                    continue
+                    except Exception as e:
+                        logger.error(f"查找 Rich Menu 列表時發生錯誤：{e}", exc_info=True)
+                
+                # 設定 Rich Menu
+                if rich_menu_id:
+                    logger.info(f"準備為用戶 {user_id} 設定 Rich Menu: {rich_menu_id}")
+                    try:
+                        success = self.rich_menu_service.set_user_rich_menu(user_id, rich_menu_id)
+                        if success:
+                            logger.info(f"✅ 已為新註冊用戶 {user_id} 設定 Rich Menu: {rich_menu_id}")
+                        else:
+                            logger.warning(f"❌ 為用戶 {user_id} 設定 Rich Menu 失敗（API 返回失敗）")
+                    except Exception as e:
+                        logger.error(f"❌ 設定用戶 Rich Menu 時發生錯誤：{e}", exc_info=True)
+                        # 不影響註冊流程，繼續執行
+                else:
+                    logger.warning(f"⚠️  未找到已註冊用戶的 Rich Menu，跳過自動設定（用戶 {user_id}）")
+            else:
+                logger.debug(f"用戶 {user_id} 不是新註冊用戶，跳過 Rich Menu 設定")
             
             success_message = f"""✅ 註冊報班帳號成功！
 
@@ -1182,6 +1260,74 @@ class JobHandler:
             applications = self.application_service.get_user_applications(user_id)
             for app in applications:
                 self.application_service.cancel_application(user_id, app.job_id)
+            
+            # 自動將用戶的 Rich Menu 設為未註冊用戶的 Rich Menu
+            logger.info(f"用戶 {user_id} 已註銷，準備設定未註冊用戶的 Rich Menu")
+            
+            # 優先使用環境變數設定的 Rich Menu ID
+            rich_menu_id = UNREGISTERED_USER_RICH_MENU_ID
+            logger.debug(f"從環境變數讀取的 UNREGISTERED_USER_RICH_MENU_ID: {rich_menu_id}")
+            
+            # 如果未設定，嘗試從 Rich Menu 列表中查找
+            if not rich_menu_id:
+                logger.info("環境變數未設定，嘗試從 Rich Menu 列表中查找...")
+                try:
+                    rich_menus = self.rich_menu_service.get_rich_menu_list()
+                    logger.debug(f"取得 {len(rich_menus)} 個 Rich Menu")
+                    
+                    # 方法1: 嘗試透過 name 欄位查找
+                    for rm in rich_menus:
+                        rm_id = rm.get('richMenuId')
+                        rm_name = rm.get('name', '')
+                        logger.debug(f"檢查 Rich Menu: ID={rm_id}, name={rm_name}")
+                        
+                        if rm_name == '未註冊用戶 Rich Menu':
+                            rich_menu_id = rm_id
+                            logger.info(f"透過 name 欄位找到未註冊用戶 Rich Menu: {rich_menu_id}")
+                            break
+                    
+                    # 方法2: 如果方法1失敗，透過詳細資訊查找（檢查 areas 數量）
+                    if not rich_menu_id:
+                        logger.info("透過 name 欄位未找到，嘗試透過詳細資訊查找...")
+                        for rm in rich_menus:
+                            rm_id = rm.get('richMenuId')
+                            if not rm_id or not isinstance(rm_id, str):
+                                continue
+                            try:
+                                rm_detail = self.rich_menu_service.get_rich_menu(rm_id)
+                                if rm_detail:
+                                    areas = rm_detail.get('areas', [])
+                                    # 未註冊用戶有 2 個區域，已註冊用戶有 3 個區域
+                                    if len(areas) == 2:
+                                        # 進一步檢查是否有 "註冊功能" 的 action
+                                        has_register = any(
+                                            'action=register' in area.get('action', {}).get('data', '')
+                                            for area in areas
+                                        )
+                                        if has_register:
+                                            rich_menu_id = rm_id
+                                            logger.info(f"透過詳細資訊找到未註冊用戶 Rich Menu: {rich_menu_id}")
+                                            break
+                            except Exception as e:
+                                logger.debug(f"取得 Rich Menu {rm_id} 詳細資訊時發生錯誤：{e}")
+                                continue
+                except Exception as e:
+                    logger.error(f"查找 Rich Menu 列表時發生錯誤：{e}", exc_info=True)
+            
+            # 設定 Rich Menu
+            if rich_menu_id:
+                logger.info(f"準備為用戶 {user_id} 設定未註冊用戶的 Rich Menu: {rich_menu_id}")
+                try:
+                    success_rm = self.rich_menu_service.set_user_rich_menu(user_id, rich_menu_id)
+                    if success_rm:
+                        logger.info(f"✅ 已為註銷用戶 {user_id} 設定未註冊用戶的 Rich Menu: {rich_menu_id}")
+                    else:
+                        logger.warning(f"❌ 為用戶 {user_id} 設定未註冊用戶的 Rich Menu 失敗（API 返回失敗）")
+                except Exception as e:
+                    logger.error(f"❌ 設定用戶 Rich Menu 時發生錯誤：{e}", exc_info=True)
+                    # 不影響註銷流程，繼續執行
+            else:
+                logger.warning(f"⚠️  未找到未註冊用戶的 Rich Menu，跳過自動設定（用戶 {user_id}）")
             
             self.message_service.send_text(
                 reply_token,

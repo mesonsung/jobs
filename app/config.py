@@ -47,3 +47,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 # 伺服器設定
 LINE_BOT_PORT = int(os.getenv("LINE_BOT_PORT", "3000"))
 FASTAPI_PORT = int(os.getenv("FASTAPI_PORT", "8880"))
+
+# Rich Menu 設定（可選，如果未設定則不會自動設定 Rich Menu）
+REGISTERED_USER_RICH_MENU_ID = os.getenv("REGISTERED_USER_RICH_MENU_ID", None)
+UNREGISTERED_USER_RICH_MENU_ID = os.getenv("UNREGISTERED_USER_RICH_MENU_ID", None)

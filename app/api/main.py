@@ -4,7 +4,7 @@ FastAPI 主應用程式
 from fastapi import FastAPI
 from app.core.database import init_db
 from app.core.logger import setup_logger
-from app.api.routes import auth, geocoding, jobs, users
+from app.api.routes import auth, geocoding, jobs, users, rich_menu
 
 # 設置 logger
 logger = setup_logger(__name__)
@@ -20,11 +20,12 @@ except Exception as e:
     logger.warning(f"資料庫初始化失敗：{e}", exc_info=True)
     logger.warning("將繼續使用記憶體儲存（資料不會持久化）")
 
-# 註冊報班帳號路由
+# 註冊路由
 api_app.include_router(auth.router)
 api_app.include_router(geocoding.router)
 api_app.include_router(jobs.router)
 api_app.include_router(users.router)
+api_app.include_router(rich_menu.router)
 
 
 @api_app.get("/")
