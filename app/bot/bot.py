@@ -190,19 +190,35 @@ class PartTimeJobBot:
     
     def _handle_postback(self, event: Dict, reply_token: str, user_id: str) -> None:
         """處理 postback 事件"""
-        postback_data = event['postback'].get('data', '')
-        logger.debug(f"_handle_postback: 收到 postback: {postback_data} (user_id: {user_id})")
+        postback = event.get('postback', {})
+        postback_data = postback.get('data', '')
+        postback_params = postback.get('params', {})  # datetime picker 回傳的 date/time
+        logger.debug(f"_handle_postback: 收到 postback: {postback_data} params={postback_params} (user_id: {user_id})")
         
         # 解析 postback data
         parsed_data = urllib.parse.parse_qs(postback_data)
         action = parsed_data.get('action', [''])[0]
         step = parsed_data.get('step', [''])[0]
+        field = parsed_data.get('field', [''])[0]
         job_id = parsed_data.get('job_id', [''])[0]
         shift = parsed_data.get('shift', [''])[0]
         
         # 解碼 shift（如果有）
         if shift:
             shift = urllib.parse.unquote(shift)
+        
+        # 處理 date picker 回傳（params.date）：依流程狀態或 postback data 判斷
+        if postback_params and 'date' in postback_params:
+            picked_date = postback_params['date']
+            # 依「註冊流程是否在 birthday 步驟」判斷
+            reg_state = self.handler.state_service.get_registration_state(user_id)
+            if reg_state is not None and reg_state.get('step') == 'birthday':
+                self.handler.handle_register_birthday_picked(reply_token, user_id, picked_date)
+                return
+            # 若無狀態，再依 postback data 判斷（註冊生日；修改資料不包含生日）
+            if action == 'register' and step == 'birthday':
+                self.handler.handle_register_birthday_picked(reply_token, user_id, picked_date)
+                return
         
         # 根據不同的步驟處理
         if action == 'register':
@@ -214,19 +230,18 @@ class PartTimeJobBot:
             elif step == 'input':
                 field = parsed_data.get('field', [''])[0]
                 if field:
-                    # 設定修改狀態並提示輸入
+                    # 設定修改狀態並提示輸入（可修改：手機、地址、Email）
                     self.handler.state_service.new_edit_profile_state(user_id, field)
                     user = self.handler.auth_service.get_user_by_line_id(user_id) if self.handler.auth_service else None
-                    
                     if field == 'phone':
                         current = user.phone if user and user.phone else '未填寫'
-                        prompt = f"📱 修改手機號碼\n\n目前的手機號碼：{current}\n\n請輸入新的手機號碼（格式：09XX-XXX-XXX 或 09XXXXXXXX）：\n\n或輸入「取消」取消修改。"
+                        prompt = f"📞 修改手機號碼\n\n目前的手機號碼：{current}\n\n請輸入新的手機號碼（格式：09XX-XXX-XXX 或 09XXXXXXXX）：\n\n或輸入「取消」取消修改。"
                     elif field == 'address':
                         current = user.address if user and user.address else '未填寫'
-                        prompt = f"📍 修改地址\n\n目前的地址：{current}\n\n請輸入新的地址：\n\n或輸入「取消」取消修改。"
+                        prompt = f"🏠 修改地址\n\n目前的地址：{current}\n\n請輸入新的地址：\n\n或輸入「取消」取消修改。"
                     elif field == 'email':
                         current = user.email if user and user.email else '未填寫'
-                        prompt = f"📧 修改 Email\n\n目前的 Email：{current}\n\n請輸入新的 Email：\n\n（可選，輸入「跳過」可清除 Email）\n或輸入「取消」取消修改。"
+                        prompt = f"📬 修改 Email\n\n目前的 Email：{current}\n\n請輸入新的 Email：\n\n（可選，輸入「跳過」可清除 Email）\n或輸入「取消」取消修改。"
                     else:
                         prompt = "請輸入新值："
                     

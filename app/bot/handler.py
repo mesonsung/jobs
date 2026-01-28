@@ -4,6 +4,7 @@ LINE Bot 工作事件處理器
 from typing import Dict, Optional, List, Any, Union
 import urllib.parse
 import datetime
+import re
 import requests
 
 from app.services.job_service import JobService
@@ -51,6 +52,61 @@ def validate_email(email: str) -> bool:
         return False
 
 
+def validate_name_at_least_two_chinese(name: str) -> bool:
+    """
+    驗證姓名至少包含二個中文字。
+    """
+    if not name or not name.strip():
+        return False
+    chinese_chars = re.findall(r'[\u4e00-\u9fff]', name)
+    return len(chinese_chars) >= 2
+
+
+def validate_taiwan_id(id_str: str) -> bool:
+    """
+    台灣身份證字號驗證（含檢核碼）。
+    格式：一碼英文字母 + 九碼數字，字母對照表不含 I、O（與 1、0 易混淆）。
+    """
+    if not id_str or len(id_str) != 10:
+        return False
+    id_str = id_str.strip().upper()
+    # 第 1 碼：A-Z（依內政部對照表）
+    letter_map = "ABCDEFGHJKLMNPQRSTUVXYWZIO"  # 對應 10~35
+    if id_str[0] not in letter_map:
+        return False
+    # 第 2 碼：性別 1 或 2
+    if id_str[1] not in ('1', '2'):
+        return False
+    # 第 3~10 碼：數字
+    if not id_str[2:].isdigit():
+        return False
+    # 檢核：權重 [1,9,8,7,6,5,4,3,2,1,1]，字母換成兩碼（十位、個位）
+    n = letter_map.index(id_str[0]) + 10  # 10~35
+    digits = [n // 10, n % 10] + [int(c) for c in id_str[1:]]
+    weights = [1, 9, 8, 7, 6, 5, 4, 3, 2, 1, 1]
+    if len(digits) != 11 or len(weights) != 11:
+        return False
+    total = sum(d * w for d, w in zip(digits, weights))
+    return (total % 10) == 0
+
+
+def validate_birthday_iso(s: str) -> bool:
+    """驗證西元生日格式 YYYY-MM-DD 且為合理日期。"""
+    if not s or len(s) != 10:
+        return False
+    s = s.strip()
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+        return False
+    try:
+        y, m, d = int(s[:4]), int(s[5:7]), int(s[8:10])
+        dt = datetime.date(y, m, d)
+        # 合理範圍：1900~今年
+        today = datetime.date.today()
+        return datetime.date(1900, 1, 1) <= dt <= today
+    except ValueError:
+        return False
+
+
 class JobHandler:
     """工作事件處理器"""
     
@@ -65,8 +121,20 @@ class JobHandler:
         self.rich_menu_service = rich_menu_service or LineRichMenuService()
     
     def show_available_jobs(self, reply_token: str, user_id: Optional[str] = None) -> None:
-        """顯示可報班的可報班工作（使用輪播方式，按日期升序排序）"""
+        """顯示可報班的可報班工作（使用輪播方式，按日期升序排序），排除使用者已報班的日期"""
         jobs = self.job_service.get_available_jobs()
+        
+        # 排除使用者已報班的日期：若該日已有任一報班記錄，該日期的所有工作都不顯示
+        if user_id:
+            applications = self.application_service.get_user_applications(user_id)
+            applied_dates = set()
+            for app in applications:
+                job = self.job_service.get_job(app.job_id)
+                if job and job.date:
+                    applied_dates.add(job.date)
+            if applied_dates:
+                jobs = [j for j in jobs if j.date not in applied_dates]
+                logger.info(f"排除已報班日期 {applied_dates}，剩餘 {len(jobs)} 個可報班工作")
         
         logger.info(f"查詢可報班工作：找到 {len(jobs)} 個工作")
         # 記錄每個工作的 ID 和名稱，方便調試（按日期排序）
@@ -196,7 +264,7 @@ class JobHandler:
                     status_text = "⭕未報班"
                 
                 # 組合文字內容（最多 120 字元）
-                job_text = f"📍{location_display}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
+                job_text = f"🏠{location_display}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
                 
                 # 確保文字不超過 120 字元
                 if len(job_text) > 120:
@@ -205,11 +273,11 @@ class JobHandler:
                         shifts_display = f"{len(shifts)}個班別"
                     else:
                         shifts_display = shifts[0][:15] if shifts else "未指定"
-                    job_text = f"📍{location_display}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
+                    job_text = f"🏠{location_display}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
                     
                     # 如果還是太長，進一步簡化
                     if len(job_text) > 120:
-                        job_text = f"📍{location_display[:15]}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
+                        job_text = f"🏠{location_display[:15]}\n📅{job.date or '未指定日期'}\n⏰{shifts_display}\n{status_text}"
                 
                 # 建立 Carousel column
                 column = {
@@ -252,7 +320,7 @@ class JobHandler:
             try:
                 fallback_text = f"📋 可報班的工作（共 {len(jobs)} 個）：\n\n"
                 for i, job in enumerate(jobs[:5], 1):  # 只顯示前 5 個
-                    fallback_text += f"{i}. {job.name}\n   📍{job.location}\n   📅{job.date}\n\n"
+                    fallback_text += f"{i}. {job.name}\n   🏠{job.location}\n   📅{job.date}\n\n"
                 if len(jobs) > 5:
                     fallback_text += f"... 還有 {len(jobs) - 5} 個工作，請稍後再試。"
                 self.message_service.send_text(reply_token, fallback_text)
@@ -281,7 +349,7 @@ class JobHandler:
         # 建立工作詳情訊息
         job_detail = f"""📌 {job.name}
 
-📍 工作地點：{job.location}
+🏠 工作地點：{job.location}
 📅 工作日期：{job.date}
 ⏰ 可選班別：
 """
@@ -522,9 +590,9 @@ class JobHandler:
         success, canceled_app = self.application_service.cancel_application(user_id, job_id)
         
         if success and canceled_app:
-            cancel_message = f"""✅ 報班已成功取消！
+            cancel_message = f"""✅ 報班已成功註銷！
 
-📋 已取消的報班資訊：
+📋 已註銷的報班資訊：
 • 工作名稱：{job.name}
 • 工作地點：{job.location}
 • 工作日期：{job.date}
@@ -534,7 +602,7 @@ class JobHandler:
 如有任何問題，歡迎隨時聯絡我們。"""
             self.message_service.send_text(reply_token, cancel_message)
         else:
-            self.message_service.send_text(reply_token, "❌ 取消報班失敗，請稍後再試。")
+            self.message_service.send_text(reply_token, "❌ 註銷報班失敗，請稍後再試。")
     
     def show_user_applications(self, reply_token: str, user_id: str) -> None:
         """顯示使用者已報班的可報班工作"""
@@ -591,10 +659,10 @@ class JobHandler:
             applied_date = app.applied_at.split()[0] if " " in app.applied_at else app.applied_at
             
             # 建立文字，逐步檢查長度
-            app_text = f"📌{job_name_display}\n📍{location_display}\n📅{job.date}\n⏰{app.shift}"
+            app_text = f"📌{job_name_display}\n🏠{location_display}\n📅{job.date}\n⏰{app.shift}"
             
             # 如果還有空間，加入報班編號
-            test_text = app_text + f"\n🆔{app_id_display}"
+            test_text = app_text + f"\n。🏷️{app_id_display}"
             if len(test_text) <= 60:
                 app_text = test_text
                 # 如果還有更多空間，加入報班時間
@@ -699,11 +767,13 @@ class JobHandler:
                 user_info = f"""✅ 您已經註冊報班帳號過了！
 
 📋 您的帳號資訊：
-• 姓名：{user.full_name or '未填寫'}
-• 手機：{user.phone or '未填寫'}
-• 地址：{user.address or '未填寫'}
-• Email：{user.email or '未填寫'}
-• 註冊報班帳號時間：{user.created_at}"""
+• 🧑‍💼 姓名：{user.full_name or '未填寫'}
+• 🎂 生日：{user.birthday or '未填寫'}
+• 📞 手機：{user.phone or '未填寫'}
+• 🏠 地址：{user.address or '未填寫'}
+• 🪪 身份證：{user.id_number or '未填寫'}
+• 📬 Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}"""
                 self.message_service.send_text(reply_token, user_info)
             return
         
@@ -713,7 +783,8 @@ class JobHandler:
         
         self.message_service.send_text(
             reply_token,
-            "📝 歡迎註冊報班帳號！請依序填寫以下資料：\n\n第一步：請輸入您的姓名"
+            "📝 歡迎註冊報班帳號！請依序填寫以下資料：\n\n"
+            "🧑‍💼 第一步：請輸入您的姓名（至少二個中文字）"
         )
         
     def _handle_register_complete(self, reply_token: str, user_id: str, data: dict) -> None:
@@ -722,8 +793,10 @@ class JobHandler:
         try:
             # 取得並驗證必填欄位
             full_name = data['full_name']
+            birthday = data.get('birthday') or ''
             phone = data['phone']
             address = data['address']
+            id_number = data.get('id_number') or ''
             email = data['email']
 
             # 建立使用者（確保所有欄位都有值）
@@ -740,8 +813,10 @@ class JobHandler:
             user = self.auth_service.create_line_user(
                 line_user_id=user_id,
                 full_name=full_name,
+                birthday=birthday or None,
                 phone=phone,
                 address=address,
+                id_number=id_number.upper().strip() if id_number else None,
                 email=email
             )
             
@@ -819,11 +894,13 @@ class JobHandler:
             success_message = f"""✅ 註冊報班帳號成功！
 
 📋 您的註冊報班帳號資訊：
-• 姓名：{user.full_name}
-• 手機：{user.phone}
-• 地址：{user.address}
-• Email：{user.email or '未填寫'}
-• 註冊報班帳號時間：{user.created_at}
+• 🧑‍💼 姓名：{user.full_name}
+• 🎂 生日：{user.birthday or '未填寫'}
+• 📞 手機：{user.phone}
+• 🏠 地址：{user.address}
+• 🪪 身份證：{user.id_number or '未填寫'}
+• 📬 Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}
 
 現在您可以開始報班工作了！"""
             
@@ -866,7 +943,7 @@ class JobHandler:
         
         logger.debug(f"handle_register_input: step: {step} (data: {state['data']}) (user_id: {user_id})")
         if step == 'name':
-            # 儲存姓名，進入下一步
+            # 儲存姓名（至少二個中文字），進入下一步
             name = text.strip()
             if not name:
                 self.message_service.send_text(
@@ -874,35 +951,76 @@ class JobHandler:
                     "❌ 姓名不能為空，請重新輸入。"
                 )
                 return
+            if not validate_name_at_least_two_chinese(name):
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 姓名至少需包含二個中文字，請重新輸入。"
+                )
+                return
             state['data']['full_name'] = name
+            self.state_service.update_registration_state(user_id, step='birthday', data=state['data'])
+            logger.debug(f"Set registration_states: new step: birthday (data: {state['data']}) (user_id: {user_id})")
+            # 使用 date picker 選擇生日（範圍：今天-65年 ～ 今天-15年）
+            today = datetime.date.today()
+            min_birthday = today.replace(year=today.year - 65)
+            max_birthday = today.replace(year=today.year - 15)
+            picker_action = {
+                "type": "datetimepicker",
+                "label": "選擇生日",
+                "data": "action=register&step=birthday",
+                "mode": "date",
+                "min": min_birthday.isoformat(),
+                "max": max_birthday.isoformat()
+            }
+            messages = [
+                {"type": "text", "text": f"✅ 姓名已記錄：{name}\n\n🎂 第二步：請點下方按鈕選擇生日"},
+                {
+                    "type": "template",
+                    "altText": "選擇生日",
+                    "template": {
+                        "type": "buttons",
+                        "title": "選擇生日",
+                        "text": "請點下方按鈕選擇您的生日（西元）",
+                        "actions": [picker_action]
+                    }
+                }
+            ]
+            self.message_service.send_multiple_messages(reply_token, messages)
+
+        elif step == 'birthday':
+            # 若使用者用文字輸入生日（date picker 以外的備援）
+            raw = text.strip()
+            if not validate_birthday_iso(raw):
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 生日格式不正確，請點下方按鈕選擇生日，或使用西元 YYYY-MM-DD（例：1990-01-15）。"
+                )
+                return
+            state['data']['birthday'] = raw
             self.state_service.update_registration_state(user_id, step='phone', data=state['data'])
-            logger.debug(f"Set registration_states: new step: phone (data: {state['data']}) (user_id: {user_id})")
             self.message_service.send_text(
                 reply_token,
-                f"✅ 姓名已記錄：{name}\n\n第二步：請輸入您的手機號碼\n（格式：09XX-XXX-XXX 或 09XXXXXXXX）"
+                f"✅ 生日已記錄：{raw}\n\n📞 第三步：請輸入您的手機號碼（格式：09XX-XXX-XXX 或 09XXXXXXXX）"
             )
         
         elif step == 'phone':
             # 驗證並儲存手機號碼
             phone = text.strip().replace('-', '').replace(' ', '')
-            # 簡單驗證：台灣手機號碼格式
             if not phone.isdigit() or len(phone) != 10 or not phone.startswith('09'):
                 self.message_service.send_text(
                     reply_token,
-                    "❌ 手機號碼格式不正確，請輸入10位數手機號碼（例如：0912345678）"
+                    "❌ 手機號碼格式不正確，請輸入 10 位數手機（例如：0912345678）。"
                 )
                 return
             
             state['data']['phone'] = phone
             self.state_service.update_registration_state(user_id, step='address', data=state['data'])
-            logger.debug(f"Set registration_states: new step: address (data: {state['data']}) (user_id: {user_id})")
             self.message_service.send_text(
                 reply_token,
-                f"✅ 手機號碼已記錄：{phone}\n\n第三步：請輸入您的地址"
+                f"✅ 手機號碼已記錄：{phone}\n\n🏠 第四步：請輸入您的地址"
             )
         
         elif step == 'address':
-            # 儲存地址，進入下一步
             address = text.strip()
             if not address:
                 self.message_service.send_text(
@@ -910,31 +1028,59 @@ class JobHandler:
                     "❌ 地址不能為空，請重新輸入。"
                 )
                 return
-
             state['data']['address'] = address
-            self.state_service.update_registration_state(user_id, step='email', data=state['data'])
-            logger.debug(f"Set registration_states: new step: email (data: {state['data']}) (user_id: {user_id})")
+            self.state_service.update_registration_state(user_id, step='id_number', data=state['data'])
             self.message_service.send_text(
                 reply_token,
-                f"✅ 地址已記錄：{address}\n\n第四步：請輸入您的 Email"
+                f"✅ 地址已記錄：{address}\n\n🪪 第五步：請輸入您的身份證字號（台灣身份證格式）"
+            )
+
+        elif step == 'id_number':
+            # 驗證並儲存台灣身份證字號
+            id_str = text.strip().upper().replace(' ', '')
+            if not validate_taiwan_id(id_str):
+                self.message_service.send_text(
+                    reply_token,
+                    "❌ 身份證字號格式或檢核不符，請輸入正確的台灣身份證字號（一碼英文+九碼數字）。"
+                )
+                return
+            state['data']['id_number'] = id_str
+            self.state_service.update_registration_state(user_id, step='email', data=state['data'])
+            self.message_service.send_text(
+                reply_token,
+                f"✅ 身份證已記錄\n\n📬 第六步：請輸入您的 E-mail（須可收信）"
             )
         
         elif step == 'email':
-            # 處理 Email（可選）
             email = text.strip()
-            # 簡單的 Email 驗證
             if not validate_email(email):
                 self.message_service.send_text(
                     reply_token,
-                    "❌ Email 格式不正確，請重新輸入"
+                    "❌ E-mail 格式不正確，請重新輸入。"
                 )
                 return
-            
             state['data']['email'] = email
             self.state_service.update_registration_state(user_id, data=state['data'])
-
             self._handle_register_complete(reply_token, user_id, state['data'])
 
+    def handle_register_birthday_picked(self, reply_token: str, user_id: str, date_str: str) -> None:
+        """處理註冊流程中由 date picker 選擇的生日"""
+        state = self.state_service.get_registration_state(user_id)
+        if state is None or state.get('step') != 'birthday':
+            logger.warning(f"handle_register_birthday_picked: user_id={user_id} state invalid or step not birthday (state={state})")
+            self.message_service.send_text(
+                reply_token,
+                "❓ 未偵測到註冊中的生日步驟，請重新點「註冊報班帳號」從頭填寫。"
+            )
+            return
+        if not isinstance(state.get('data'), dict):
+            state['data'] = state.get('data') or {}
+        state['data']['birthday'] = date_str
+        self.state_service.update_registration_state(user_id, step='phone', data=state['data'])
+        self.message_service.send_text(
+            reply_token,
+            f"✅ 生日已記錄：{date_str}\n\n📞 第三步：請輸入您的手機號碼（格式：09XX-XXX-XXX 或 09XXXXXXXX）"
+        )
     
     def handle_edit_profile(self, reply_token: str, user_id: str) -> None:
         """處理修改報班帳號資料 - 選擇要修改的欄位"""
@@ -956,28 +1102,12 @@ class JobHandler:
             self.message_service.send_text(reply_token, "❌ 找不到您的帳號資訊。")
             return
         
-        # 顯示選擇要修改的欄位
+        # 顯示選擇要修改的欄位（可修改：手機、地址、Email；LINE 按鈕範本最多 4 個）
         actions = [
-            {
-                "type": "postback",
-                "label": "📱 手機號碼",
-                "data": f"action=edit_profile&step=input&field=phone"
-            },
-            {
-                "type": "postback",
-                "label": "📍 地址",
-                "data": f"action=edit_profile&step=input&field=address"
-            },
-            {
-                "type": "postback",
-                "label": "📧 Email",
-                "data": f"action=edit_profile&step=input&field=email"
-            },
-            {
-                "type": "postback",
-                "label": "🔙 返回",
-                "data": "action=view_profile&step=view"
-            }
+            {"type": "postback", "label": "📞 手機", "data": "action=edit_profile&step=input&field=phone"},
+            {"type": "postback", "label": "🏠 地址", "data": "action=edit_profile&step=input&field=address"},
+            {"type": "postback", "label": "📬 Email", "data": "action=edit_profile&step=input&field=email"},
+            {"type": "postback", "label": "🔙 返回", "data": "action=view_profile&step=view"}
         ]
         
         # LINE 按鈕範本 text 欄位限制 60 字元，需要簡化顯示
@@ -999,10 +1129,12 @@ class JobHandler:
             # 嘗試發送文字訊息作為備用
             backup_message = f"""📋 您目前的資料：
 
-• 姓名：{user.full_name or '未填寫'}（不可修改）
-• 手機：{user.phone or '未填寫'}
-• 地址：{user.address or '未填寫'}
-• Email：{user.email or '未填寫'}
+• 🧑‍💼 姓名：{user.full_name or '未填寫'}（不可修改）
+• 🎂 生日：{user.birthday or '未填寫'}
+• 📞 手機：{user.phone or '未填寫'}
+• 🏠 地址：{user.address or '未填寫'}
+• 🪪 身份證：{user.id_number or '未填寫'}
+• 📬 Email：{user.email or '未填寫'}
 
 請點擊主選單中的「修改報班帳號資料」來修改資料。"""
             self.message_service.send_text(reply_token, backup_message)
@@ -1041,12 +1173,14 @@ class JobHandler:
             # 更新資料
             user = self.auth_service.get_user_by_line_id(user_id)
             if user:
-                updated_user = self.auth_service.create_line_user(
+                self.auth_service.create_line_user(
                     line_user_id=user_id,
-                    full_name=user.full_name,  # 保持原姓名
+                    full_name=user.full_name,
+                    birthday=user.birthday,
                     phone=phone,
-                    address=user.address,  # 保持原地址
-                    email=user.email  # 保持原 Email
+                    address=user.address,
+                    id_number=user.id_number,
+                    email=user.email
                 )
                 
                 # 清除修改狀態
@@ -1072,12 +1206,14 @@ class JobHandler:
             # 更新資料
             user = self.auth_service.get_user_by_line_id(user_id)
             if user:
-                updated_user = self.auth_service.create_line_user(
+                self.auth_service.create_line_user(
                     line_user_id=user_id,
-                    full_name=user.full_name,  # 保持原姓名
-                    phone=user.phone,  # 保持原手機
+                    full_name=user.full_name,
+                    birthday=user.birthday,
+                    phone=user.phone,
                     address=address,
-                    email=user.email  # 保持原 Email
+                    id_number=user.id_number,
+                    email=user.email
                 )
                 
                 # 清除修改狀態
@@ -1096,8 +1232,7 @@ class JobHandler:
             if email.lower() in ['跳過', 'skip', '略過', '清除', '清空', '']:
                 email = None
             else:
-                # 簡單的 Email 驗證
-                if '@' not in email or '.' not in email.split('@')[-1]:
+                if not validate_email(email):
                     self.message_service.send_text(
                         reply_token,
                         "❌ Email 格式不正確，請重新輸入或輸入「跳過」清除 Email。"
@@ -1107,11 +1242,13 @@ class JobHandler:
             # 更新資料
             user = self.auth_service.get_user_by_line_id(user_id)
             if user:
-                updated_user = self.auth_service.create_line_user(
+                self.auth_service.create_line_user(
                     line_user_id=user_id,
-                    full_name=user.full_name,  # 保持原姓名
-                    phone=user.phone,  # 保持原手機
-                    address=user.address,  # 保持原地址
+                    full_name=user.full_name,
+                    birthday=user.birthday,
+                    phone=user.phone,
+                    address=user.address,
+                    id_number=user.id_number,
                     email=email
                 )
                 
@@ -1140,11 +1277,13 @@ class JobHandler:
         # 顯示更新後的報班帳號資料
         user_info = f"""📋 您的報班帳號資料：
 
-• 姓名：{user.full_name or '未填寫'}
-• 手機：{user.phone or '未填寫'}
-• 地址：{user.address or '未填寫'}
-• Email：{user.email or '未填寫'}
-• 註冊報班帳號時間：{user.created_at}"""
+• 🧑‍💼 姓名：{user.full_name or '未填寫'}
+• 🎂 生日：{user.birthday or '未填寫'}
+• 📞 手機：{user.phone or '未填寫'}
+• 🏠 地址：{user.address or '未填寫'}
+• 🪪 身份證：{user.id_number or '未填寫'}
+• 📬 Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}"""
         
         # 準備操作按鈕
         actions = [
@@ -1362,11 +1501,13 @@ class JobHandler:
         # 顯示報班帳號資料（使用文字訊息，因為內容較長）
         user_info = f"""📋 您的報班帳號資料：
 
-• 姓名：{user.full_name or '未填寫'}
-• 手機：{user.phone or '未填寫'}
-• 地址：{user.address or '未填寫'}
-• Email：{user.email or '未填寫'}
-• 註冊報班帳號時間：{user.created_at}"""
+• 🧑‍💼 姓名：{user.full_name or '未填寫'}
+• 🎂 生日：{user.birthday or '未填寫'}
+• 📞 手機：{user.phone or '未填寫'}
+• 🏠 地址：{user.address or '未填寫'}
+• 🪪 身份證：{user.id_number or '未填寫'}
+• 📬 Email：{user.email or '未填寫'}
+• 註冊時間：{user.created_at}"""
         
         # 準備操作按鈕
         actions = [

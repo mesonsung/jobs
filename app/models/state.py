@@ -2,10 +2,10 @@
 狀態管理相關資料模型
 """
 from sqlalchemy import Column, String, Text, DateTime, Enum as SQLEnum
-from sqlalchemy.sql import func
 import json
 from enum import Enum
 from app.core.database import Base
+from app.core.time_utils import utc_now
 
 
 class StateType(str, Enum):
@@ -22,8 +22,8 @@ class RegistrationStateModel(Base):
     state_type = Column(SQLEnum(StateType), nullable=False, index=True)  # 狀態類型
     step = Column(String, nullable=False)  # 當前步驟
     data = Column(Text, nullable=True)  # 狀態資料（JSON 字串）
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     
     def get_data_dict(self) -> dict:
         """將 JSON 字串轉換為字典"""

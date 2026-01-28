@@ -2,8 +2,8 @@
 使用者相關資料模型
 """
 from sqlalchemy import Column, String, Boolean, DateTime
-from sqlalchemy.sql import func
 from app.core.database import Base
+from app.core.time_utils import utc_now
 
 
 class UserModel(Base):
@@ -14,11 +14,13 @@ class UserModel(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     email = Column(String, nullable=True)
     full_name = Column(String, nullable=True)
+    birthday = Column(String, nullable=True)  # 西元生日 YYYY-MM-DD
     phone = Column(String, nullable=True)
     address = Column(String, nullable=True)
+    id_number = Column(String, nullable=True)  # 台灣身份證字號
     hashed_password = Column(String, nullable=True)  # LINE 使用者可能沒有密碼
     is_admin = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     line_user_id = Column(String, unique=True, nullable=True, index=True)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

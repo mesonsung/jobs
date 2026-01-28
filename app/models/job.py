@@ -3,8 +3,8 @@
 """
 from sqlalchemy import Column, String, Integer, Float, ARRAY, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 from app.core.database import Base
+from app.core.time_utils import utc_now
 
 
 class JobModel(Base):
@@ -19,8 +19,8 @@ class JobModel(Base):
     location_image_url = Column(String, nullable=True)
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     
     # 關聯
     applications = relationship("ApplicationModel", back_populates="job", cascade="all, delete-orphan")
@@ -35,8 +35,8 @@ class ApplicationModel(Base):
     user_id = Column(String, nullable=False, index=True)
     user_name = Column(String, nullable=True)
     shift = Column(String, nullable=False)
-    applied_at = Column(DateTime, nullable=False, server_default=func.now())
-    created_at = Column(DateTime, server_default=func.now())
+    applied_at = Column(DateTime, nullable=False, default=utc_now)
+    created_at = Column(DateTime, default=utc_now)
     
     # 關聯
     job = relationship("JobModel", back_populates="applications")

@@ -8,6 +8,7 @@ from app.services.auth_service import AuthService
 from app.models.schemas import User, UserInDB
 from app.api.dependencies import require_admin, get_auth_service
 from app.core.database import SessionLocal
+from app.core.time_utils import format_datetime_taiwan
 from app.models.user import UserModel
 from typing import Annotated
 
@@ -28,11 +29,13 @@ def get_all_users(
                 username=user.username,
                 email=user.email,
                 full_name=user.full_name,
+                birthday=user.birthday,
                 phone=user.phone,
                 address=user.address,
+                id_number=user.id_number,
                 is_admin=user.is_admin,
                 is_active=user.is_active,
-                created_at=user.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=format_datetime_taiwan(user.created_at),
                 line_user_id=user.line_user_id
             )
             for user in user_models
@@ -56,8 +59,10 @@ def get_user(
         username=user.username,
         email=user.email,
         full_name=user.full_name,
+        birthday=user.birthday,
         phone=user.phone,
         address=user.address,
+        id_number=user.id_number,
         is_admin=user.is_admin,
         is_active=user.is_active,
         created_at=user.created_at,

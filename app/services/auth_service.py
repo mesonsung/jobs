@@ -6,6 +6,8 @@ import datetime
 from typing import Optional
 from datetime import timedelta
 from sqlalchemy.orm import Session
+
+from app.core.time_utils import format_datetime_taiwan, utc_now
 from fastapi import HTTPException, status
 from jose import JWTError, jwt
 
@@ -141,7 +143,7 @@ class AuthService:
                 address=user_model.address,
                 is_admin=user_model.is_admin,
                 is_active=user_model.is_active,
-                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=format_datetime_taiwan(user_model.created_at),
                 line_user_id=user_model.line_user_id
             )
         except Exception as e:
@@ -151,8 +153,9 @@ class AuthService:
             if should_close:
                 db.close()
     
-    def create_line_user(self, line_user_id: str, full_name: Optional[str] = None, 
-                        phone: Optional[str] = None, address: Optional[str] = None, 
+    def create_line_user(self, line_user_id: str, full_name: Optional[str] = None,
+                        birthday: Optional[str] = None, phone: Optional[str] = None,
+                        address: Optional[str] = None, id_number: Optional[str] = None,
                         email: Optional[str] = None, db: Optional[Session] = None) -> User:
         """
         建立 LINE 使用者（不需要密碼）
@@ -160,8 +163,10 @@ class AuthService:
         參數:
             line_user_id: LINE User ID
             full_name: 使用者全名
+            birthday: 西元生日 YYYY-MM-DD
             phone: 手機號碼
             address: 地址
+            id_number: 台灣身份證字號
             email: 電子郵件
             db: 資料庫會話（可選）
         
@@ -185,13 +190,17 @@ class AuthService:
                 # 如果已存在，更新現有使用者資料（只更新非 None 的欄位）
                 if full_name is not None and full_name:
                     user_model.full_name = full_name
+                if birthday is not None:
+                    user_model.birthday = birthday
                 if phone is not None and phone:
                     user_model.phone = phone
                 if address is not None and address:
                     user_model.address = address
+                if id_number is not None:
+                    user_model.id_number = id_number
                 if email is not None:  # email 可以是 None（可選欄位）
                     user_model.email = email
-                user_model.updated_at = datetime.datetime.now()
+                user_model.updated_at = utc_now()
                 db.commit()
                 db.refresh(user_model)
             else:
@@ -204,8 +213,10 @@ class AuthService:
                     username=username,
                     email=email,
                     full_name=full_name or f"LINE使用者_{line_user_id[:8]}",
+                    birthday=birthday,
                     phone=phone,
                     address=address,
+                    id_number=id_number,
                     is_admin=False,
                     is_active=True,
                     hashed_password=None,  # LINE 使用者不需要密碼
@@ -224,11 +235,13 @@ class AuthService:
                 username=user_model.username,
                 email=user_model.email,
                 full_name=user_model.full_name,
+                birthday=user_model.birthday,
                 phone=user_model.phone,
                 address=user_model.address,
+                id_number=user_model.id_number,
                 is_admin=user_model.is_admin,
                 is_active=user_model.is_active,
-                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=format_datetime_taiwan(user_model.created_at),
                 line_user_id=user_model.line_user_id
             )
         except Exception as e:
@@ -239,7 +252,8 @@ class AuthService:
                 db.close()
     
     def update_line_user(self, line_user_id: str, full_name: Optional[str] = None,
-                        phone: Optional[str] = None, address: Optional[str] = None,
+                        birthday: Optional[str] = None, phone: Optional[str] = None,
+                        address: Optional[str] = None, id_number: Optional[str] = None,
                         email: Optional[str] = None, db: Optional[Session] = None) -> Optional[User]:
         """
         更新 LINE 使用者資料
@@ -247,8 +261,10 @@ class AuthService:
         參數:
             line_user_id: LINE User ID
             full_name: 使用者全名（不可修改）
+            birthday: 西元生日 YYYY-MM-DD
             phone: 手機號碼
             address: 地址
+            id_number: 台灣身份證字號
             email: 電子郵件
             db: 資料庫會話（可選）
         
@@ -269,13 +285,17 @@ class AuthService:
                 return None
             
             # 更新資料（只更新非 None 的欄位，且 full_name 不可修改）
+            if birthday is not None:
+                user_model.birthday = birthday
             if phone is not None:
                 user_model.phone = phone
             if address is not None:
                 user_model.address = address
+            if id_number is not None:
+                user_model.id_number = id_number
             if email is not None:
                 user_model.email = email
-            user_model.updated_at = datetime.datetime.now()
+            user_model.updated_at = utc_now()
             
             db.commit()
             db.refresh(user_model)
@@ -285,11 +305,13 @@ class AuthService:
                 username=user_model.username,
                 email=user_model.email,
                 full_name=user_model.full_name,
+                birthday=user_model.birthday,
                 phone=user_model.phone,
                 address=user_model.address,
+                id_number=user_model.id_number,
                 is_admin=user_model.is_admin,
                 is_active=user_model.is_active,
-                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=format_datetime_taiwan(user_model.created_at),
                 line_user_id=user_model.line_user_id
             )
         except Exception as e:
@@ -317,11 +339,13 @@ class AuthService:
                 username=user_model.username,
                 email=user_model.email,
                 full_name=user_model.full_name,
+                birthday=user_model.birthday,
                 phone=user_model.phone,
                 address=user_model.address,
+                id_number=user_model.id_number,
                 is_admin=user_model.is_admin,
                 is_active=user_model.is_active,
-                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=format_datetime_taiwan(user_model.created_at),
                 line_user_id=user_model.line_user_id,
                 hashed_password=user_model.hashed_password
             )
@@ -348,11 +372,13 @@ class AuthService:
                 username=user_model.username,
                 email=user_model.email,
                 full_name=user_model.full_name,
+                birthday=user_model.birthday,
                 phone=user_model.phone,
                 address=user_model.address,
+                id_number=user_model.id_number,
                 is_admin=user_model.is_admin,
                 is_active=user_model.is_active,
-                created_at=user_model.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=format_datetime_taiwan(user_model.created_at),
                 line_user_id=user_model.line_user_id,
                 hashed_password=user_model.hashed_password
             )

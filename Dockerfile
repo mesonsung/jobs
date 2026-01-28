@@ -47,7 +47,6 @@ ENV PATH=/home/appuser/.local/bin:$PATH \
 
 # 複製應用程式檔案
 COPY app/ ./app/
-COPY part_time_jobs.py .
 COPY main.py .
 COPY gunicorn_config.py .
 

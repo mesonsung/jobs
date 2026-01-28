@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func
 
 from app.core.database import SessionLocal
+from app.core.time_utils import utc_now
 from app.models.job import ApplicationModel
 from app.models.schemas import Application
 
@@ -53,9 +54,10 @@ class ApplicationService:
             # 報班編號格式：工作編號-日期-流水號
             # 例如：JOB001-20260110-001
             
-            # 取得當前日期（YYYYMMDD格式）
-            today = datetime.datetime.now().strftime('%Y%m%d')
-            today_date = datetime.datetime.now().date()
+            # 取得當前 UTC 日期（YYYYMMDD 格式，供編號與同一天篩選）
+            _now = utc_now()
+            today = _now.strftime('%Y%m%d')
+            today_date = _now.date()
             
             # 計算該工作在同一天的流水號
             # 從資料庫查詢該工作在同一天的所有報班記錄
@@ -71,7 +73,7 @@ class ApplicationService:
             # 組合報班編號：工作編號-日期-流水號
             application_id = f"{job_id}-{today}-{sequence_str}"
             
-            applied_at = datetime.datetime.now()
+            applied_at = utc_now()
             
             # 建立資料庫記錄
             application_model = ApplicationModel(

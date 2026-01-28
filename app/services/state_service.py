@@ -2,10 +2,11 @@
 狀態管理服務
 """
 from typing import Optional, Dict, Any
+from datetime import timedelta
 from sqlalchemy.orm import Session
-from sqlalchemy.sql import func
 from app.core.database import SessionLocal
 from app.core.logger import setup_logger
+from app.core.time_utils import utc_now
 from app.models.state import RegistrationStateModel, StateType
 
 # 設置 logger
@@ -92,7 +93,7 @@ class StateService:
                 # 更新現有狀態
                 existing_state.step = step
                 existing_state.set_data_dict(data or {})
-                existing_state.updated_at = func.now()
+                existing_state.updated_at = utc_now()
                 db.commit()
                 db.refresh(existing_state)
                 logger.debug(f"new_registration_state: 更新現有狀態 user_id: {user_id}")
@@ -258,7 +259,7 @@ class StateService:
             if existing_state:
                 # 更新現有狀態
                 existing_state.set_data_dict(data)
-                existing_state.updated_at = func.now()
+                existing_state.updated_at = utc_now()
                 db.commit()
                 db.refresh(existing_state)
                 logger.debug(f"new_edit_profile_state: 更新現有狀態 user_id: {user_id}")
@@ -330,14 +331,13 @@ class StateService:
         返回:
             清理的狀態數量
         """
-        from datetime import datetime, timedelta
         from sqlalchemy import and_
         
         db = self._get_db()
         should_close = self.db is None
         
         try:
-            expire_time = datetime.now() - timedelta(hours=hours)
+            expire_time = utc_now() - timedelta(hours=hours)
             
             expired_states = db.query(RegistrationStateModel).filter(
                 RegistrationStateModel.updated_at < expire_time

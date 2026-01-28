@@ -98,6 +98,13 @@ def create_sample_jobs(job_service: JobService, geocoding_service: GeocodingServ
             "location_image_url": None
         },
         {
+            "name": "後廚切菜工",
+            "location": "台北市信義區信義路五段7號",
+            "date": (date.today() + timedelta(days=3)).strftime('%Y-%m-%d'),
+            "shifts": ["早班:08-19", "中班:14-23", "晚班:22-07"],
+            "location_image_url": None
+        },
+        {
             "name": "活動工作人員",
             "location": "桃園市桃園區中正五街196號",
             "date": (date.today() + timedelta(days=5)).strftime('%Y-%m-%d'),
@@ -105,7 +112,21 @@ def create_sample_jobs(job_service: JobService, geocoding_service: GeocodingServ
             "location_image_url": None
         },
         {
+            "name": "活動策劃人員",
+            "location": "桃園市桃園區中正五街196號",
+            "date": (date.today() + timedelta(days=5)).strftime('%Y-%m-%d'),
+            "shifts": ["早班:09-18", "晚班:18-22"],
+            "location_image_url": None
+        },
+        {
             "name": "展覽導覽員",
+            "location": "新北市鶯歌區鳳吉一街193號",
+            "date": (date.today() + timedelta(days=7)).strftime('%Y-%m-%d'),
+            "shifts": ["早班:10-18"],
+            "location_image_url": None
+        },
+        {
+            "name": "導覽員(台語)",
             "location": "新北市鶯歌區鳳吉一街193號",
             "date": (date.today() + timedelta(days=7)).strftime('%Y-%m-%d'),
             "shifts": ["早班:10-18"],

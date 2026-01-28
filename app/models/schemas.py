@@ -44,8 +44,10 @@ class User(BaseModel):
     username: str
     email: Optional[str] = None
     full_name: Optional[str] = None
+    birthday: Optional[str] = None  # 西元生日 YYYY-MM-DD
     phone: Optional[str] = None  # 手機號碼
     address: Optional[str] = None  # 地址
+    id_number: Optional[str] = None  # 台灣身份證字號
     is_admin: bool = False
     is_active: bool = True
     created_at: str
